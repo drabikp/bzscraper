@@ -10,7 +10,13 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+
 @Component
 public class BZDataFetcher {
     private static final String BASE_URL = "https://bandzone.cz";
@@ -20,7 +26,6 @@ public class BZDataFetcher {
         Document document;
         try {
             String uriString = UriComponentsBuilder.fromHttpUrl(BASE_URL).pathSegment(bandSlug).queryParam("at", "gig").queryParam("gy", "0").build().toUriString();
-
             document = Jsoup.connect(uriString).get();
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -28,8 +33,18 @@ public class BZDataFetcher {
 
         List<String> years = parseYears(document);
         Elements articles = new Elements();
-        years.forEach(year -> {
-            articles.addAll(getArticlesForYear(bandSlug, year));
+
+        ExecutorService executorService = Executors.newFixedThreadPool(years.size());
+        List<Future<Elements>> futureList = new ArrayList<>(years.size());
+        years.forEach(year -> futureList.add(executorService.submit(() -> getArticlesForYear(bandSlug, year))));
+        executorService.shutdown();
+
+        futureList.forEach(elementsFuture -> {
+            try {
+                articles.addAll(elementsFuture.get());
+            } catch (InterruptedException | ExecutionException e) {
+                throw new RuntimeException(e);
+            }
         });
 
         return articles;
@@ -49,4 +64,5 @@ public class BZDataFetcher {
             throw new RuntimeException(e);
         }
     }
+
 }
