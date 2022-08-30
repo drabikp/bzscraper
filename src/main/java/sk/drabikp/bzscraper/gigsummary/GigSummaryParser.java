@@ -16,7 +16,7 @@ public class GigSummaryParser {
     private static final Logger logger = LoggerFactory.getLogger(GigSummaryParser.class);
 
     public List<GigSummary> parse(Elements elements) {
-        return elements.stream().map(this::parseGig).sorted(Comparator.comparing(GigSummary::start)).toList();
+        return elements.stream().parallel().map(this::parseGig).sorted(Comparator.comparing(GigSummary::start)).toList();
     }
 
     private GigSummary parseGig(Element element) {

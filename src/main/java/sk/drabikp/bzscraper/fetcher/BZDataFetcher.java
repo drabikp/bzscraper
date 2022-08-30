@@ -12,10 +12,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.*;
 
 @Component
 public class BZDataFetcher {
@@ -34,10 +31,22 @@ public class BZDataFetcher {
         List<String> years = parseYears(document);
         Elements articles = new Elements();
 
+        // this performs better than a parallel stream
         ExecutorService executorService = Executors.newFixedThreadPool(years.size());
         List<Future<Elements>> futureList = new ArrayList<>(years.size());
-        years.forEach(year -> futureList.add(executorService.submit(() -> getArticlesForYear(bandSlug, year))));
+        years.forEach(year -> {
+            futureList.add(executorService.submit(() -> getArticlesForYear(bandSlug, year)));
+            logger.debug("[{}] - submitted task for year {}", bandSlug, year);
+        });
+
         executorService.shutdown();
+        try {
+            //noinspection ResultOfMethodCallIgnored
+            executorService.awaitTermination(60L, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
+        logger.debug("[{}] - executorService shutdown called", bandSlug);
 
         futureList.forEach(elementsFuture -> {
             try {
@@ -57,9 +66,11 @@ public class BZDataFetcher {
 
     private Elements getArticlesForYear(String bandSlug, String year) {
         try {
-            logger.debug("Downloading data for year " + year);
+            logger.debug("Downloading data for year {}", year);
             String uriString = UriComponentsBuilder.fromHttpUrl(BASE_URL).pathSegment(bandSlug).queryParam("at", "gig").queryParam("gy", year).build().toUriString();
-            return Jsoup.connect(uriString).get().select("article.gig");
+            Elements elements = Jsoup.connect(uriString).get().select("article.gig");
+            logger.debug("Data for year {} downloaded", year);
+            return elements;
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
