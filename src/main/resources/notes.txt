@@ -1,0 +1,5 @@
+Definicia:
+- co je single source of truth: BZ, pretoze je read-only
+
+Sync:
+1.
