@@ -16,6 +16,10 @@
 	<properties>
 		<java.version>17</java.version>
 		<vaadin.version>24.0.5</vaadin.version>
+		<swagger-annotations-version>1.5.21</swagger-annotations-version>
+		<jackson-version>2.15.2</jackson-version>
+		<openapi-codegen.version>6.6.0</openapi-codegen.version>
+		<spring-cloud.version>2022.0.4</spring-cloud.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -31,6 +35,32 @@
 			<artifactId>vaadin-spring-boot-starter</artifactId>
 		</dependency>
 
+<!--		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-core</artifactId>
+			<version>${jackson-version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-annotations</artifactId>
+			<version>${jackson-version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-databind</artifactId>
+			<version>${jackson-version}</version>
+		</dependency>-->
+
+		<dependency>
+			<groupId>org.springframework.cloud</groupId>
+			<artifactId>spring-cloud-dependencies</artifactId>
+			<version>${spring-cloud.version}</version>
+			<type>pom</type>
+			<scope>import</scope>
+		</dependency>
+
+
+
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-configuration-processor</artifactId>
@@ -42,6 +72,14 @@
 			<artifactId>jsoup</artifactId>
 			<version>1.15.3</version>
 		</dependency>
+<!--
+		<dependency>
+			<groupId>io.swagger</groupId>
+			<artifactId>swagger-annotations</artifactId>
+			<version>${swagger-annotations-version}</version>
+		</dependency>-->
+
+
 
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -53,6 +91,10 @@
 			<artifactId>opencsv</artifactId>
 			<version>5.7.1</version>
 		</dependency>
+		<dependency>
+			<groupId>org.springframework.cloud</groupId>
+			<artifactId>spring-cloud-starter-openfeign</artifactId>
+		</dependency>
 	</dependencies>
 	<dependencyManagement>
 		<dependencies>
@@ -60,6 +102,13 @@
 				<groupId>com.vaadin</groupId>
 				<artifactId>vaadin-bom</artifactId>
 				<version>${vaadin.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+			<dependency>
+				<groupId>org.springframework.cloud</groupId>
+				<artifactId>spring-cloud-dependencies</artifactId>
+				<version>${spring-cloud.version}</version>
 				<type>pom</type>
 				<scope>import</scope>
 			</dependency>
@@ -72,7 +121,44 @@
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
+			<plugin>
+				<groupId>org.openapitools</groupId>
+				<artifactId>openapi-generator-maven-plugin</artifactId>
+				<version>${openapi-codegen.version}</version>
+				<configuration>
+					<!--<typeMappings>
+						<typeMapping>time=LocalTime</typeMapping>
+					</typeMappings>
+					<importMappings>
+						<importMapping>LocalTime=java.time.LocalTime</importMapping>
+					</importMappings>-->
+					<generatorName>spring</generatorName>
+
+					<configOptions>
+						<library>spring-cloud</library>
+						<useResponseEntity>false</useResponseEntity>
+						<serializableModel>false</serializableModel>
+						<dateLibrary>java8-localdatetime</dateLibrary>
+						<documentationProvider>none</documentationProvider>
+						<annotationLibrary>none</annotationLibrary>
+						<openApiNullable>false</openApiNullable>
+						<useSpringBoot3>true</useSpringBoot3>
+					</configOptions>
+				</configuration>
+				<executions>
+					<execution>
+						<goals>
+							<goal>generate</goal>
+						</goals>
+						<configuration>
+							<!--<generateApis>false</generateApis>-->
+							<inputSpec>src/main/resources/bit-api.yaml</inputSpec>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
+
 	</build>
 
 	<profiles>

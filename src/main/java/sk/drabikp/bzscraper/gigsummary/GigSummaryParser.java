@@ -20,19 +20,20 @@ public class GigSummaryParser {
     }
 
     private GigSummary parseGig(Element element) {
-        ZonedDateTime startDateTime = parseStartDateTimeFromArticle(element);
-        ZonedDateTime endDateTime = parseEndDateTimeFromArticle(element);
-
-        String city = parseCityFromArticle(element);
-        String venue = parseVenueFromArticle(element);
         String url = parseUrlFromArticle(element);
-        String bzId = parseBzId(url);
-        List<String> bands = parseBandsFromArticle(element);
-        String title = parseTitleFromArticle(element);
-        String entryFee = parseEntryFeeFromArticle(element);
-        boolean isCancelled = parseIsCancelled(element);
 
-        return new GigSummary(bzId, title, startDateTime, endDateTime, url, city, venue, bands, entryFee, isCancelled);
+        return GigSummary.GigSummaryBuilder.aGigSummary()
+                .setCity(parseCityFromArticle(element))
+                .setVenue(parseVenueFromArticle(element))
+                .setUrl(url)
+                .setBzId(parseBzId(url))
+                .setBands(parseBandsFromArticle(element))
+                .setTitle(parseTitleFromArticle(element))
+                .setEntryFee(parseEntryFeeFromArticle(element))
+                .setIsCancelled(parseIsCancelled(element))
+                .setStart(parseStartDateTimeFromArticle(element))
+                .setEnd(parseEndDateTimeFromArticle(element))
+                .build();
     }
 
     private String parseBzId(String url) {
