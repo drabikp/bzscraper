@@ -26,7 +26,7 @@ public class BZDataFetcher {
     public Elements fetchAllGigs(String bandSlug) {
         Document document;
         try {
-            String uriString = UriComponentsBuilder.fromHttpUrl(BASE_URL).pathSegment(bandSlug).queryParam("at", "gig").queryParam("gy", "0").build().toUriString();
+            String uriString = UriComponentsBuilder.fromUriString(BASE_URL).pathSegment(bandSlug).queryParam("at", "gig").queryParam("gy", "0").build().toUriString();
             document = Jsoup.connect(uriString).get();
         } catch (IOException e) {
             throw new RuntimeException(e);
@@ -71,7 +71,7 @@ public class BZDataFetcher {
     private Elements getArticlesForYear(String bandSlug, String year) {
         try {
             logger.debug("Downloading data for year {}", year);
-            String uriString = UriComponentsBuilder.fromHttpUrl(BASE_URL).pathSegment(bandSlug).queryParam("at", "gig").queryParam("gy", year).build().toUriString();
+            String uriString = UriComponentsBuilder.fromUriString(BASE_URL).pathSegment(bandSlug).queryParam("at", "gig").queryParam("gy", year).build().toUriString();
             Elements elements = Jsoup.connect(uriString).get().select("article.gig");
             logger.debug("Data for year {} downloaded", year);
             return elements;
