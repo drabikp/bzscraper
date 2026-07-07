@@ -1,0 +1,223 @@
+package sk.drabikp.bzscraper.adapter.in.web;
+
+import com.vaadin.flow.component.UI;
+import com.vaadin.flow.component.button.Button;
+import com.vaadin.flow.component.button.ButtonVariant;
+import com.vaadin.flow.component.checkbox.CheckboxGroup;
+import com.vaadin.flow.component.dialog.Dialog;
+import com.vaadin.flow.component.grid.Grid;
+import com.vaadin.flow.component.grid.GridVariant;
+import com.vaadin.flow.component.html.Anchor;
+import com.vaadin.flow.component.html.H1;
+import com.vaadin.flow.component.notification.Notification;
+import com.vaadin.flow.component.orderedlayout.FlexComponent;
+import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
+import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import com.vaadin.flow.router.PageTitle;
+import com.vaadin.flow.router.Route;
+import com.vaadin.flow.router.RouterLink;
+import com.vaadin.flow.server.streams.DownloadHandler;
+import com.vaadin.flow.server.streams.DownloadResponse;
+import com.vaadin.flow.theme.lumo.LumoUtility;
+import org.springframework.core.task.TaskExecutor;
+import sk.drabikp.bzscraper.application.port.in.CancelGigUseCase;
+import sk.drabikp.bzscraper.application.port.in.DeleteGigUseCase;
+import sk.drabikp.bzscraper.application.port.in.ExportGigsAsCsvUseCase;
+import sk.drabikp.bzscraper.application.port.in.ListGigsUseCase;
+import sk.drabikp.bzscraper.application.port.in.PublishGigsUseCase;
+import sk.drabikp.bzscraper.application.port.in.UpdateGigUseCase;
+import sk.drabikp.bzscraper.domain.model.Gig;
+import sk.drabikp.bzscraper.domain.model.Platform;
+
+import java.io.ByteArrayInputStream;
+import java.nio.charset.StandardCharsets;
+import java.time.format.DateTimeFormatter;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Set;
+
+/**
+ * The gig catalog (DB source of truth): list stored gigs and publish, export, edit,
+ * cancel/reactivate or delete them.
+ */
+@Route("")
+@PageTitle("Gig catalog")
+public class GigListView extends VerticalLayout {
+
+    private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("EEE d MMM yyyy HH:mm");
+
+    private final ListGigsUseCase listGigs;
+    private final DeleteGigUseCase deleteGig;
+    private final UpdateGigUseCase updateGig;
+    private final CancelGigUseCase cancelGig;
+    private final PublishGigsUseCase publishGigs;
+    private final TaskExecutor taskExecutor;
+
+    private final Grid<Gig> grid = new Grid<>();
+
+    public GigListView(ListGigsUseCase listGigs, DeleteGigUseCase deleteGig, UpdateGigUseCase updateGig,
+                       CancelGigUseCase cancelGig, PublishGigsUseCase publishGigs,
+                       ExportGigsAsCsvUseCase exportCsv, TaskExecutor taskExecutor) {
+        this.listGigs = listGigs;
+        this.deleteGig = deleteGig;
+        this.updateGig = updateGig;
+        this.cancelGig = cancelGig;
+        this.publishGigs = publishGigs;
+        this.taskExecutor = taskExecutor;
+
+        setSizeFull();
+        addClassNames(LumoUtility.Padding.LARGE);
+
+        H1 title = new H1("Gig catalog");
+        title.addClassNames(LumoUtility.FontSize.XLARGE);
+        HorizontalLayout nav = new HorizontalLayout(
+                new RouterLink("+ Add gig", AddGigView.class),
+                new RouterLink("Import…", ImportView.class));
+        nav.setSpacing(true);
+
+        grid.setSelectionMode(Grid.SelectionMode.MULTI);
+        grid.addThemeVariants(GridVariant.LUMO_ROW_STRIPES);
+        grid.addColumn(g -> g.schedule().start().format(WHEN)).setHeader("When").setAutoWidth(true);
+        grid.addColumn(Gig::title).setHeader("Event").setAutoWidth(true);
+        grid.addColumn(g -> g.location().displayVenue()).setHeader("Venue").setAutoWidth(true);
+        grid.addColumn(g -> g.location().city()).setHeader("City").setAutoWidth(true);
+        grid.addColumn(g -> g.admission().type()).setHeader("Entry").setAutoWidth(true);
+        grid.addColumn(g -> g.cancelled() ? "cancelled" : "").setHeader("").setAutoWidth(true);
+        grid.setSizeFull();
+        grid.addItemDoubleClickListener(e -> openEditDialog(e.getItem()));
+
+        CheckboxGroup<Platform> targets = new CheckboxGroup<>("Publish to");
+        targets.setItems(Platform.values());
+        targets.setItemLabelGenerator(PublishSummaries::label);
+        targets.setValue(EnumSet.allOf(Platform.class));
+
+        Button publish = primary("Publish selected", e -> onPublish((Button) e.getSource(), targets.getValue()));
+        Button edit = tertiary("Edit", e -> {
+            Set<Gig> sel = grid.asMultiSelect().getValue();
+            if (sel.size() != 1) {
+                Notification.show("Select exactly one gig to edit", 3000, Notification.Position.MIDDLE);
+            } else {
+                openEditDialog(sel.iterator().next());
+            }
+        });
+        Button cancel = tertiary("Cancel", e -> lifecycle(cancelGig::cancel, "Cancelled"));
+        Button reactivate = tertiary("Reactivate", e -> lifecycle(cancelGig::reactivate, "Reactivated"));
+
+        Anchor downloadLink = new Anchor();
+        downloadLink.getElement().setAttribute("download", true);
+        Button download = tertiary("Download CSV", e -> {
+            downloadLink.setHref(csvHandler(exportCsv.csvForCatalog()));
+            downloadLink.getElement().callJsFunction("click");
+        });
+        Button delete = new Button("Delete", e -> onDelete());
+        delete.addThemeVariants(ButtonVariant.LUMO_ERROR, ButtonVariant.LUMO_TERTIARY);
+
+        HorizontalLayout actions = new HorizontalLayout(targets, publish, edit, cancel, reactivate,
+                download, delete, downloadLink);
+        actions.setAlignItems(FlexComponent.Alignment.END);
+        actions.setSpacing(true);
+
+        add(title, nav, actions, grid);
+        setFlexGrow(1, grid);
+        refresh();
+    }
+
+    private static Button primary(String text, com.vaadin.flow.component.ComponentEventListener<com.vaadin.flow.component.ClickEvent<Button>> onClick) {
+        Button b = new Button(text, onClick);
+        b.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+        return b;
+    }
+
+    private static Button tertiary(String text, com.vaadin.flow.component.ComponentEventListener<com.vaadin.flow.component.ClickEvent<Button>> onClick) {
+        Button b = new Button(text, onClick);
+        b.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
+        return b;
+    }
+
+    private void refresh() {
+        grid.setItems(listGigs.allGigs());
+    }
+
+    private void openEditDialog(Gig gig) {
+        GigForm form = new GigForm();
+        form.populate(gig);
+        Dialog dialog = new Dialog();
+        dialog.setHeaderTitle("Edit gig");
+        dialog.setWidth("40rem");
+        dialog.add(form);
+        Button save = new Button("Save", e -> {
+            String error = form.validationError();
+            if (error != null) {
+                Notification.show(error, 3000, Notification.Position.MIDDLE);
+                return;
+            }
+            updateGig.update(gig.id(), form.toGig());
+            dialog.close();
+            Notification.show("Gig updated", 3000, Notification.Position.BOTTOM_START);
+            refresh();
+        });
+        save.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+        dialog.getFooter().add(new Button("Cancel", e -> dialog.close()), save);
+        dialog.open();
+    }
+
+    private void lifecycle(java.util.function.Consumer<sk.drabikp.bzscraper.domain.model.GigId> op, String verb) {
+        Set<Gig> selected = grid.asMultiSelect().getValue();
+        if (selected.isEmpty()) {
+            Notification.show("Select at least one gig", 3000, Notification.Position.MIDDLE);
+            return;
+        }
+        selected.forEach(g -> op.accept(g.id()));
+        Notification.show(verb + " " + selected.size() + " gig(s)", 3000, Notification.Position.BOTTOM_START);
+        refresh();
+    }
+
+    private void onPublish(Button publish, Set<Platform> platforms) {
+        Set<Gig> selected = grid.asMultiSelect().getValue();
+        if (selected.isEmpty()) {
+            Notification.show("Select at least one gig", 3000, Notification.Position.MIDDLE);
+            return;
+        }
+        if (platforms.isEmpty()) {
+            Notification.show("Select at least one platform", 3000, Notification.Position.MIDDLE);
+            return;
+        }
+        List<Gig> gigs = List.copyOf(selected);
+        UI ui = UI.getCurrent();
+        publish.setEnabled(false);
+        publish.setText("Publishing…");
+        taskExecutor.execute(() -> {
+            try {
+                var results = publishGigs.publish(platforms, gigs);
+                ui.access(() -> {
+                    PublishSummaries.show(results);
+                    publish.setText("Publish selected");
+                    publish.setEnabled(true);
+                });
+            } catch (RuntimeException ex) {
+                ui.access(() -> {
+                    Notification.show("Publish failed: " + ex.getMessage(), 6000, Notification.Position.MIDDLE);
+                    publish.setText("Publish selected");
+                    publish.setEnabled(true);
+                });
+            }
+        });
+    }
+
+    private void onDelete() {
+        Set<Gig> selected = grid.asMultiSelect().getValue();
+        if (selected.isEmpty()) {
+            Notification.show("Select at least one gig to delete", 3000, Notification.Position.MIDDLE);
+            return;
+        }
+        selected.forEach(g -> deleteGig.delete(g.id()));
+        Notification.show("Deleted " + selected.size() + " gig(s)", 3000, Notification.Position.BOTTOM_START);
+        refresh();
+    }
+
+    private static DownloadHandler csvHandler(String csv) {
+        byte[] bytes = csv.getBytes(StandardCharsets.UTF_8);
+        return DownloadHandler.fromInputStream(event ->
+                new DownloadResponse(new ByteArrayInputStream(bytes), "gigs.csv", "text/csv", bytes.length));
+    }
+}

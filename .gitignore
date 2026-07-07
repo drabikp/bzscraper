@@ -32,3 +32,29 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### Vaadin (auto-generated frontend assets) ###
+src/main/frontend/generated/
+src/main/frontend/index.html
+src/main/bundles/
+package.json
+package-lock.json
+pnpmfile.js
+pnpm-lock.yaml
+tsconfig.json
+types.d.ts
+vite.config.ts
+vite.generated.ts
+.hotswap-agent.properties
+
+### OS ###
+.DS_Store
+Thumbs.db
+
+# local test credentials (never commit)
+.bz-test-creds
+.gstack/
+
+### App data / index (never commit) ###
+data/
+.codegraph/
