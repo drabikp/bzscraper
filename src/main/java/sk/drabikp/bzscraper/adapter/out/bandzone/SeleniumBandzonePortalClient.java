@@ -150,19 +150,49 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
         }
 
         @Override
-        public void createGig(Gig gig) throws BandzoneUploadException {
+        public String createGig(Gig gig) throws BandzoneUploadException {
             try {
                 openWizard();
                 fillDateAndCity(gig);
                 passDuplicateScreen();
                 fillInfoAndSend(gig);
-                verifyCreated(gig);
+                return verifyCreatedAndGetId(gig);
             } catch (BandzoneUploadException e) {
                 throw e;
             } catch (RuntimeException e) {
                 // Fail only this gig; the session stays open for the rest of the batch.
                 throw new BandzoneUploadException("Bandzone create failed for '" + gig.title()
                         + "': " + e.getMessage(), e);
+            }
+        }
+
+        @Override
+        public void cancelGig(String bandzoneId) throws BandzoneUploadException {
+            submitDeleteForm(bandzoneId, "cancelGig");
+        }
+
+        @Override
+        public void deleteGig(String bandzoneId) throws BandzoneUploadException {
+            submitDeleteForm(bandzoneId, "delete");
+        }
+
+        private void submitDeleteForm(String bandzoneId, String buttonName) throws BandzoneUploadException {
+            try {
+                driver.get(baseUrl + "/koncert/" + bandzoneId + "/update?updateTabs-at=profileDeleteForm");
+                wait.until(ExpectedConditions.presenceOfElementLocated(By.name(buttonName)));
+                // requestSubmit with the button's value posts the delete/cancel while
+                // bypassing the JS confirm() dialog that a plain click would trigger.
+                ((JavascriptExecutor) driver).executeScript(
+                        "var n=arguments[0];"
+                                + "var b=document.querySelector('[name=\"'+n+'\"]'); var f=b?b.form:null;"
+                                + "if(f){ if(b.value){var h=document.createElement('input');h.type='hidden';"
+                                + "h.name=n;h.value=b.value;f.appendChild(h);}"
+                                + " if(f.requestSubmit){f.requestSubmit(b);}else{f.submit();} }",
+                        buttonName);
+                wait.until(ExpectedConditions.urlContains("bandzone.cz"));
+            } catch (RuntimeException e) {
+                throw new BandzoneUploadException("Bandzone " + buttonName + " failed for concert "
+                        + bandzoneId + ": " + e.getMessage(), e);
             }
         }
 
@@ -238,15 +268,25 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
                     term);
         }
 
-        private void verifyCreated(Gig gig) throws BandzoneUploadException {
+        private String verifyCreatedAndGetId(Gig gig) throws BandzoneUploadException {
             int year = gig.schedule().start().getYear();
             driver.get(baseUrl + "/" + bandSlug + "?at=gig&gy=" + year);
             String title = gig.title();
-            if (!driver.getPageSource().contains(title)) {
+            // Find the created gig's link and pull its numeric concert id from the href.
+            String id = (String) ((JavascriptExecutor) driver).executeScript(
+                    "var t=arguments[0].toLowerCase();"
+                            + "var a=Array.from(document.querySelectorAll('a[href*=\"/koncert/\"]'))"
+                            + ".find(x=>(x.innerText||'').trim().toLowerCase().includes(t));"
+                            + "if(!a) return null;"
+                            + "var m=(a.getAttribute('href')||'').match(/\\/koncert\\/(\\d+)/);"
+                            + "return m?m[1]:null;",
+                    title);
+            if (id == null) {
                 throw new BandzoneUploadException("Gig '" + title + "' was submitted but did not appear "
                         + "on the band's gig list.");
             }
-            logger.info("Bandzone gig created: '{}'", title);
+            logger.info("Bandzone gig created: '{}' (id {})", title, id);
+            return id;
         }
     }
 

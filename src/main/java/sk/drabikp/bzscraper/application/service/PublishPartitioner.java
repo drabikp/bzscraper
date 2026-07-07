@@ -1,6 +1,6 @@
 package sk.drabikp.bzscraper.application.service;
 
-import sk.drabikp.bzscraper.application.port.out.UploadedGigStore;
+import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.Platform;
 import sk.drabikp.bzscraper.domain.model.PublishResult;
@@ -23,11 +23,11 @@ final class PublishPartitioner {
     record Partition(List<PublishResult> preResolved, List<Gig> toPublish) {
     }
 
-    static Partition partition(Collection<Gig> gigs, Platform platform, UploadedGigStore store) {
+    static Partition partition(Collection<Gig> gigs, Platform platform, PublishedGigStore store) {
         List<PublishResult> preResolved = new ArrayList<>();
         List<Gig> toPublish = new ArrayList<>();
         for (Gig gig : gigs) {
-            if (store.isUploaded(platform, gig.id())) {
+            if (store.isPublished(platform, gig.id())) {
                 preResolved.add(PublishResult.alreadyUploaded(platform, gig));
             } else {
                 toPublish.add(gig);

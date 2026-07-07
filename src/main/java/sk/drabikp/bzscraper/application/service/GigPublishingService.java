@@ -2,9 +2,8 @@ package sk.drabikp.bzscraper.application.service;
 
 import sk.drabikp.bzscraper.application.port.in.PublishGigsUseCase;
 import sk.drabikp.bzscraper.application.port.out.GigPublisher;
-import sk.drabikp.bzscraper.application.port.out.UploadedGigStore;
+import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.domain.model.Gig;
-import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.Platform;
 import sk.drabikp.bzscraper.domain.model.PublishResult;
 import sk.drabikp.bzscraper.domain.model.PublishStatus;
@@ -17,24 +16,17 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Orchestrates publishing across every platform. Owns the shared skeleton — dedup
- * partition, dispatch to the right {@link GigPublisher}, mark-on-success, assemble —
- * so platform strategies only implement the push. A new platform is added by
- * registering one more {@code GigPublisher} bean; this class does not change.
- *
- * <pre>
- *   for each target platform:
- *     partition(gigs) -> preResolved (invalid / already-uploaded) + toPublish
- *     publisher.publishNew(toPublish) -> per-gig PUBLISHED/FAILED
- *     mark the PUBLISHED ones (only those the platform confirmed)
- * </pre>
+ * Orchestrates publishing across every platform. Owns the shared skeleton — dedup,
+ * dispatch to the right {@link GigPublisher}, record-on-success (with the platform's
+ * external id), assemble — so platform strategies only implement the push. A new
+ * platform is one more {@code GigPublisher} bean; this class does not change.
  */
 public class GigPublishingService implements PublishGigsUseCase {
 
     private final Map<Platform, GigPublisher> publishers;
-    private final UploadedGigStore uploadedGigStore;
+    private final PublishedGigStore publishedGigStore;
 
-    public GigPublishingService(List<GigPublisher> publishers, UploadedGigStore uploadedGigStore) {
+    public GigPublishingService(List<GigPublisher> publishers, PublishedGigStore publishedGigStore) {
         this.publishers = new EnumMap<>(Platform.class);
         for (GigPublisher publisher : publishers) {
             GigPublisher existing = this.publishers.put(publisher.platform(), publisher);
@@ -43,7 +35,7 @@ public class GigPublishingService implements PublishGigsUseCase {
                         + publisher.platform());
             }
         }
-        this.uploadedGigStore = uploadedGigStore;
+        this.publishedGigStore = publishedGigStore;
     }
 
     @Override
@@ -62,7 +54,7 @@ public class GigPublishingService implements PublishGigsUseCase {
         }
 
         PublishPartitioner.Partition partition =
-                PublishPartitioner.partition(gigs, platform, uploadedGigStore);
+                PublishPartitioner.partition(gigs, platform, publishedGigStore);
         List<PublishResult> results = new ArrayList<>(partition.preResolved());
         if (partition.toPublish().isEmpty()) {
             return results;
@@ -73,7 +65,7 @@ public class GigPublishingService implements PublishGigsUseCase {
             pushed = publisher.publishNew(partition.toPublish());
         } catch (RuntimeException e) {
             // A publisher throwing an unexpected error fails only its own platform,
-            // never the whole multi-platform run. Nothing is marked, so it retries.
+            // never the whole multi-platform run. Nothing is recorded, so it retries.
             for (Gig gig : partition.toPublish()) {
                 results.add(PublishResult.failed(platform, gig, e.getMessage()));
             }
@@ -81,13 +73,9 @@ public class GigPublishingService implements PublishGigsUseCase {
         }
 
         results.addAll(pushed);
-        List<GigId> succeeded = pushed.stream()
+        pushed.stream()
                 .filter(r -> r.status() == PublishStatus.PUBLISHED)
-                .map(r -> r.gig().id())
-                .toList();
-        if (!succeeded.isEmpty()) {
-            uploadedGigStore.markUploaded(platform, succeeded);
-        }
+                .forEach(r -> publishedGigStore.record(platform, r.gig().id(), r.externalRef()));
         return results;
     }
 }

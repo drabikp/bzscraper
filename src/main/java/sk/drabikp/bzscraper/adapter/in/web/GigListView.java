@@ -26,8 +26,11 @@ import sk.drabikp.bzscraper.application.port.in.ExportGigsAsCsvUseCase;
 import sk.drabikp.bzscraper.application.port.in.ListGigsUseCase;
 import sk.drabikp.bzscraper.application.port.in.PublishGigsUseCase;
 import sk.drabikp.bzscraper.application.port.in.UpdateGigUseCase;
+import sk.drabikp.bzscraper.application.port.in.WithdrawGigsUseCase;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.Platform;
+import sk.drabikp.bzscraper.domain.model.WithdrawAction;
+import sk.drabikp.bzscraper.domain.model.WithdrawResult;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -51,18 +54,21 @@ public class GigListView extends VerticalLayout {
     private final UpdateGigUseCase updateGig;
     private final CancelGigUseCase cancelGig;
     private final PublishGigsUseCase publishGigs;
+    private final WithdrawGigsUseCase withdrawGigs;
     private final TaskExecutor taskExecutor;
 
     private final Grid<Gig> grid = new Grid<>();
 
     public GigListView(ListGigsUseCase listGigs, DeleteGigUseCase deleteGig, UpdateGigUseCase updateGig,
                        CancelGigUseCase cancelGig, PublishGigsUseCase publishGigs,
-                       ExportGigsAsCsvUseCase exportCsv, TaskExecutor taskExecutor) {
+                       WithdrawGigsUseCase withdrawGigs, ExportGigsAsCsvUseCase exportCsv,
+                       TaskExecutor taskExecutor) {
         this.listGigs = listGigs;
         this.deleteGig = deleteGig;
         this.updateGig = updateGig;
         this.cancelGig = cancelGig;
         this.publishGigs = publishGigs;
+        this.withdrawGigs = withdrawGigs;
         this.taskExecutor = taskExecutor;
 
         setSizeFull();
@@ -100,7 +106,7 @@ public class GigListView extends VerticalLayout {
                 openEditDialog(sel.iterator().next());
             }
         });
-        Button cancel = tertiary("Cancel", e -> lifecycle(cancelGig::cancel, "Cancelled"));
+        Button cancel = tertiary("Cancel", e -> onCancel());
         Button reactivate = tertiary("Reactivate", e -> lifecycle(cancelGig::reactivate, "Reactivated"));
 
         Anchor downloadLink = new Anchor();
@@ -204,15 +210,63 @@ public class GigListView extends VerticalLayout {
         });
     }
 
+    private void onCancel() {
+        Set<Gig> selected = grid.asMultiSelect().getValue();
+        if (selected.isEmpty()) {
+            Notification.show("Select at least one gig", 3000, Notification.Position.MIDDLE);
+            return;
+        }
+        selected.forEach(g -> cancelGig.cancel(g.id())); // local, immediate
+        refresh();
+        // propagate the cancellation to any platform the gig was published to
+        withdrawOnPlatforms(selected, WithdrawAction.CANCEL, "Cancelled");
+    }
+
     private void onDelete() {
         Set<Gig> selected = grid.asMultiSelect().getValue();
         if (selected.isEmpty()) {
             Notification.show("Select at least one gig to delete", 3000, Notification.Position.MIDDLE);
             return;
         }
-        selected.forEach(g -> deleteGig.delete(g.id()));
-        Notification.show("Deleted " + selected.size() + " gig(s)", 3000, Notification.Position.BOTTOM_START);
-        refresh();
+        UI ui = UI.getCurrent();
+        taskExecutor.execute(() -> {
+            List<WithdrawResult> all = new java.util.ArrayList<>();
+            for (Gig g : selected) {
+                all.addAll(withdrawGigs.withdraw(g.id(), WithdrawAction.DELETE));
+                deleteGig.delete(g.id()); // local removal after platform delete
+            }
+            ui.access(() -> {
+                refresh();
+                Notification.show("Deleted " + selected.size() + " gig(s). "
+                        + platformSummary(all), 5000, Notification.Position.BOTTOM_START);
+            });
+        });
+    }
+
+    private void withdrawOnPlatforms(Set<Gig> gigs, WithdrawAction action, String localVerb) {
+        UI ui = UI.getCurrent();
+        taskExecutor.execute(() -> {
+            List<WithdrawResult> all = new java.util.ArrayList<>();
+            gigs.forEach(g -> all.addAll(withdrawGigs.withdraw(g.id(), action)));
+            ui.access(() -> Notification.show(localVerb + " " + gigs.size() + " gig(s). "
+                    + platformSummary(all), 5000, Notification.Position.BOTTOM_START));
+        });
+    }
+
+    private static String platformSummary(List<WithdrawResult> results) {
+        if (results.isEmpty()) {
+            return "Not published to any platform.";
+        }
+        long ok = results.stream().filter(WithdrawResult::succeeded).count();
+        long failed = results.size() - ok;
+        StringBuilder sb = new StringBuilder("Platforms: ").append(ok).append(" ok");
+        if (failed > 0) {
+            sb.append(", ").append(failed).append(" failed");
+            results.stream().filter(r -> !r.succeeded()).map(WithdrawResult::detail)
+                    .filter(d -> d != null && !d.isBlank()).findFirst()
+                    .ifPresent(d -> sb.append(" (").append(d).append(")"));
+        }
+        return sb.toString();
     }
 
     private static DownloadHandler csvHandler(String csv) {

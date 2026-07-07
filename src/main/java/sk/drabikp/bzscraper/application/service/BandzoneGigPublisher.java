@@ -48,8 +48,8 @@ public class BandzoneGigPublisher implements GigPublisher {
         try (session) {
             for (Gig gig : gigs) {
                 try {
-                    session.createGig(gig);
-                    results.add(PublishResult.published(Platform.BANDZONE, gig));
+                    String bandzoneId = session.createGig(gig);
+                    results.add(PublishResult.published(Platform.BANDZONE, gig, bandzoneId));
                 } catch (BandzoneUploadException e) {
                     results.add(PublishResult.failed(Platform.BANDZONE, gig, e.getMessage()));
                 }

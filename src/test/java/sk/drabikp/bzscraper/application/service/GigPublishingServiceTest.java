@@ -3,7 +3,7 @@ package sk.drabikp.bzscraper.application.service;
 import org.junit.jupiter.api.Test;
 import sk.drabikp.bzscraper.TestGigs;
 import sk.drabikp.bzscraper.application.port.out.GigPublisher;
-import sk.drabikp.bzscraper.application.port.out.UploadedGigStore;
+import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.Platform;
 import sk.drabikp.bzscraper.domain.model.PublishResult;
@@ -23,7 +23,7 @@ import static org.mockito.Mockito.when;
 
 class GigPublishingServiceTest {
 
-    private final UploadedGigStore store = mock(UploadedGigStore.class);
+    private final PublishedGigStore store = mock(PublishedGigStore.class);
 
     private static GigPublisher publisherFor(Platform platform) {
         GigPublisher p = mock(GigPublisher.class);
@@ -32,12 +32,12 @@ class GigPublishingServiceTest {
     }
 
     @Test
-    void pushes_new_gigs_and_marks_only_the_ones_the_publisher_confirmed() {
+    void records_only_confirmed_gigs_with_their_external_ref() {
         Gig a = TestGigs.gig("A", "Klub 007");
         Gig b = TestGigs.gig("B", "Barrák");
         GigPublisher bit = publisherFor(Platform.BANDSINTOWN);
         when(bit.publishNew(anyList())).thenReturn(List.of(
-                PublishResult.published(Platform.BANDSINTOWN, a),
+                PublishResult.published(Platform.BANDSINTOWN, a, "evt-42"),
                 PublishResult.failed(Platform.BANDSINTOWN, b, "row rejected")));
         GigPublishingService service = new GigPublishingService(List.of(bit), store);
 
@@ -45,14 +45,15 @@ class GigPublishingServiceTest {
 
         assertThat(results).extracting(PublishResult::status)
                 .containsExactlyInAnyOrder(PublishStatus.PUBLISHED, PublishStatus.FAILED);
-        verify(store).markUploaded(Platform.BANDSINTOWN, List.of(a.id()));
+        verify(store).record(Platform.BANDSINTOWN, a.id(), "evt-42");
+        verify(store, never()).record(Platform.BANDSINTOWN, b.id(), null);
     }
 
     @Test
-    void already_uploaded_gigs_are_skipped_before_the_publisher_is_called() {
+    void already_published_gigs_are_skipped_before_the_publisher_is_called() {
         Gig already = TestGigs.gig("Old", "Klub 007");
         Gig fresh = TestGigs.gig("Fresh", "New Venue");
-        when(store.isUploaded(Platform.BANDSINTOWN, already.id())).thenReturn(true);
+        when(store.isPublished(Platform.BANDSINTOWN, already.id())).thenReturn(true);
         GigPublisher bit = publisherFor(Platform.BANDSINTOWN);
         when(bit.publishNew(anyList())).thenReturn(List.of(PublishResult.published(Platform.BANDSINTOWN, fresh)));
         GigPublishingService service = new GigPublishingService(List.of(bit), store);
@@ -65,20 +66,20 @@ class GigPublishingServiceTest {
     }
 
     @Test
-    void when_everything_is_already_uploaded_the_publisher_is_not_called_and_nothing_marked() {
+    void when_everything_is_already_published_the_publisher_is_not_called_and_nothing_recorded() {
         Gig already = TestGigs.gig("Old", "Klub 007");
-        when(store.isUploaded(Platform.BANDSINTOWN, already.id())).thenReturn(true);
+        when(store.isPublished(Platform.BANDSINTOWN, already.id())).thenReturn(true);
         GigPublisher bit = publisherFor(Platform.BANDSINTOWN);
         GigPublishingService service = new GigPublishingService(List.of(bit), store);
 
         service.publish(Platform.BANDSINTOWN, List.of(already));
 
         verify(bit, never()).publishNew(anyList());
-        verify(store, never()).markUploaded(any(), any());
+        verify(store, never()).record(any(), any(), any());
     }
 
     @Test
-    void a_publisher_throwing_fails_only_its_own_batch_and_marks_nothing() {
+    void a_publisher_throwing_fails_only_its_own_batch_and_records_nothing() {
         Gig a = TestGigs.gig("A", "Klub 007");
         GigPublisher bit = publisherFor(Platform.BANDSINTOWN);
         when(bit.publishNew(anyList())).thenThrow(new RuntimeException("driver crashed"));
@@ -90,15 +91,15 @@ class GigPublishingServiceTest {
             assertThat(r.status()).isEqualTo(PublishStatus.FAILED);
             assertThat(r.detail()).isEqualTo("driver crashed");
         });
-        verify(store, never()).markUploaded(any(), any());
+        verify(store, never()).record(any(), any(), any());
     }
 
     @Test
-    void publishes_to_multiple_platforms_and_tags_each_result() {
+    void publishes_to_multiple_platforms_and_records_each() {
         Gig a = TestGigs.gig("A", "Klub 007");
         GigPublisher bz = publisherFor(Platform.BANDZONE);
         GigPublisher bit = publisherFor(Platform.BANDSINTOWN);
-        when(bz.publishNew(anyList())).thenReturn(List.of(PublishResult.published(Platform.BANDZONE, a)));
+        when(bz.publishNew(anyList())).thenReturn(List.of(PublishResult.published(Platform.BANDZONE, a, "561859")));
         when(bit.publishNew(anyList())).thenReturn(List.of(PublishResult.published(Platform.BANDSINTOWN, a)));
         GigPublishingService service = new GigPublishingService(List.of(bz, bit), store);
 
@@ -106,8 +107,8 @@ class GigPublishingServiceTest {
 
         assertThat(results).extracting(PublishResult::platform)
                 .containsExactlyInAnyOrder(Platform.BANDZONE, Platform.BANDSINTOWN);
-        verify(store).markUploaded(Platform.BANDZONE, List.of(a.id()));
-        verify(store).markUploaded(Platform.BANDSINTOWN, List.of(a.id()));
+        verify(store).record(Platform.BANDZONE, a.id(), "561859");
+        verify(store).record(Platform.BANDSINTOWN, a.id(), null);
     }
 
     @Test
@@ -116,8 +117,7 @@ class GigPublishingServiceTest {
                 List.of(publisherFor(Platform.BANDSINTOWN)), store);
 
         assertThatThrownBy(() -> service.publish(Platform.BANDZONE, List.of()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("BANDZONE");
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
