@@ -58,3 +58,4 @@ Thumbs.db
 ### App data / index (never commit) ###
 data/
 .codegraph/
+.bit-test-creds

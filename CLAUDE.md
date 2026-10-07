@@ -41,7 +41,7 @@ Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
     `ImportGigsUseCase`, legacy scrape/CSV use cases.
   - `port/out/` — `GigRepository`, `PublishedGigStore`, `Transactions`, per-platform strategies
     `GigPublisher` / `GigUpdater` / `GigWithdrawer` / `GigImporter`,
-    `BandzonePortalClient` + `BandzoneSession`, `BitPortalClient`, exceptions.
+    `BandzonePortalClient` + `BandzoneSession`, `BitPortalClient` + `BitSession`, exceptions.
   - `service/` — `GigCatalogService`, `GigPublishingService` (+ `PublishPartitioner`),
     `GigResyncService`, `GigWithdrawalService`, `GigImportService`, the publisher
     strategies `BandzoneGigPublisher` / `BandsintownGigPublisher`, legacy
@@ -53,8 +53,10 @@ Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
   `PublishedGigEntity`/`JpaPublishedGigStore`, `SpringTransactions`, `H2ScriptBackup`);
   `bandzone/` (scrape provider + importer, Selenium
   `SeleniumBandzonePortalClient`, `BandzoneLineupPage`, `BandzoneGigUpdater`,
-  `BandzoneGigWithdrawer`, `StubBandzonePortalClient`); `csv/`; `bandsintown/`
-  `StubBitPortalClient`.
+  `BandzoneGigWithdrawer`, `StubBandzonePortalClient`); `csv/` (`OpenCsvGigExporter`, the
+  manual-import download); `bandsintown/` (`BandsintownCsv` format, Selenium
+  `SeleniumBitPortalClient` + `SeleniumBitSession`, `HumanPacer`, `Totp`,
+  `BandsintownGigUpdater`, `BandsintownGigWithdrawer`, `StubBitPortalClient`).
 - **config/** — `UseCaseConfiguration` wires POJO services as `@Bean`s.
 
 Services are plain POJOs wired explicitly in `UseCaseConfiguration`; adapters are
@@ -113,8 +115,35 @@ bzscraper.bandzone.selenium.chromedriver=/usr/bin/chromedriver
 - Not supported by Bandzone: un-cancel, removing a poster, ticket URL. Per-band set
   times are not modeled.
 
-Bandsintown has no write API; `StubBitPortalClient` is a placeholder until the
-artist-portal flow is captured. Bandsintown has no updater/withdrawer yet.
+## Bandsintown (Selenium)
+
+Bandsintown has no write API for artists, and its internal API signs every request, so
+the artist portal (artists.bandsintown.com) is driven in Chromium. Off by default (stub):
+
+```
+bzscraper.bandsintown.selenium.enabled=true
+bzscraper.bandsintown.login / .password / .totp-secret   # authenticator base32 secret; NEVER in source
+bzscraper.bandsintown.notify-followers=false              # default: publish silently
+bzscraper.bandsintown.artist-id / .artist-name            # optional; to pick the artist
+bzscraper.bandsintown.selenium.profile-dir                # default ~/.bzscraper/bandsintown-browser
+bzscraper.bandsintown.pacing.min-ms / .max-ms             # human pauses between steps
+```
+
+- **Create** — Bulk Upload of a `BandsintownCsv` (template columns, ≤ 25 rows per upload)
+  creates drafts; the upload reply maps CSV row → event id. In the success dialog
+  "Notify my followers" is set from config, then Publish; the event list is read back
+  to confirm PUBLISHED. Silent = "Do Not Announce = Y" + switch off (`announced_at`
+  2000-01-01).
+- **Update** — Bulk Upload of a row WITH `Event Id` (+ `Status`) edits the event in place.
+- **Cancel/Delete** — Bandsintown has no cancelled state: both remove the event via the
+  row's "⋯" → Delete, reason CANCELED or OTHER. Already-gone = success (so reactivate =
+  delete no-op + create). Editing a cancelled gig skips Bandsintown.
+- Replies are read by wrapping `window.fetch` in the page. The row to delete is found by
+  its index in the captured event list and checked (city, day) before clicking.
+- **Human pacing** (`HumanPacer`, user requirement): random pauses, real mouse clicks,
+  key-by-key typing, one browser at a time, saved login reused (authenticator code only
+  when the session expired), no automation flags / HeadlessChrome UA.
+- Failures save a screenshot to `$TMPDIR/bzscraper-bandsintown-<step>.png`.
 
 ## Database
 
@@ -148,3 +177,8 @@ poster) and deletes a real Bandzone gig. Skipped unless `BZ_LIVE=true`; reads
 `BZ_LOGIN` / `BZ_PASSWORD` / `BZ_SLUG`, `BZ_LINEUP_BAND` (a real band that gets
 notified), optional `BZ_KEEP=true`, `BZ_CHROMIUM` / `BZ_CHROMEDRIVER`. Run it only
 against a test band.
+
+`SeleniumBitPortalClientLiveTest` creates a made-up Bandsintown event (published
+WITHOUT notifying followers), edits it and deletes it. Skipped unless `BIT_LIVE=true`;
+reads `BIT_LOGIN` / `BIT_PASSWORD` / `BIT_TOTP`; `BIT_CLEANUP_ID=<id>` only deletes a
+leftover event. There is no Bandsintown test artist — the event is public for ~1 minute.

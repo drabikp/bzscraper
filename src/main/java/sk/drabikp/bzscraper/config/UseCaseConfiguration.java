@@ -1,5 +1,6 @@
 package sk.drabikp.bzscraper.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import sk.drabikp.bzscraper.application.port.out.BandzonePortalClient;
@@ -39,8 +40,10 @@ public class UseCaseConfiguration {
     }
 
     @Bean
-    BandsintownGigPublisher bandsintownGigPublisher(GigCsvExporter csvExporter, BitPortalClient portalClient) {
-        return new BandsintownGigPublisher(csvExporter, portalClient);
+    BandsintownGigPublisher bandsintownGigPublisher(
+            BitPortalClient portalClient,
+            @Value("${bzscraper.bandsintown.notify-followers:false}") boolean notifyFollowers) {
+        return new BandsintownGigPublisher(portalClient, notifyFollowers);
     }
 
     @Bean
