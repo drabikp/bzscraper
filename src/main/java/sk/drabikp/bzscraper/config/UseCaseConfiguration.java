@@ -63,8 +63,9 @@ public class UseCaseConfiguration {
     }
 
     @Bean
-    GigImportService gigImportService(List<GigImporter> importers, GigRepository gigRepository) {
-        return new GigImportService(importers, gigRepository);
+    GigImportService gigImportService(List<GigImporter> importers, GigRepository gigRepository,
+                                      PublishedGigStore publishedGigStore, Transactions transactions) {
+        return new GigImportService(importers, gigRepository, publishedGigStore, transactions);
     }
 
     @Bean

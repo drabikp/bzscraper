@@ -1,0 +1,61 @@
+package sk.drabikp.bzscraper.domain.service;
+
+import sk.drabikp.bzscraper.domain.model.Admission;
+import sk.drabikp.bzscraper.domain.model.Gig;
+import sk.drabikp.bzscraper.domain.model.GigSchedule;
+import sk.drabikp.bzscraper.domain.model.ImportProposal.Version;
+import sk.drabikp.bzscraper.domain.model.Platform;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.function.Function;
+
+/**
+ * Builds the catalog gig from the chosen version of an imported gig. The chosen version
+ * decides what the gig is (title, time, place); details it lacks — end time, lineup,
+ * description, links, poster — are filled from the other versions (catalog first, then Bandzone,
+ * then Bandsintown). Bandsintown carries no entry information, so the entry comes from
+ * any other version when one exists. A gig cancelled in any version stays cancelled.
+ */
+public final class GigMerge {
+
+    private GigMerge() {
+    }
+
+    public static Gig merge(Version chosen, List<Version> versions) {
+        List<Version> order = new ArrayList<>();
+        order.add(chosen);
+        versions.stream().filter(v -> !v.equals(chosen)).forEach(order::add);
+        Gig base = chosen.gig();
+
+        List<String> lineup = base.lineup().isEmpty()
+                ? order.stream().map(v -> v.gig().lineup()).filter(l -> !l.isEmpty()).findFirst().orElse(List.of())
+                : base.lineup();
+        Admission admission = order.stream()
+                .filter(v -> v.platform() != Platform.BANDSINTOWN)
+                .map(v -> v.gig().admission())
+                .findFirst()
+                .orElse(base.admission());
+        boolean cancelled = order.stream().anyMatch(v -> v.gig().cancelled());
+
+        GigSchedule schedule = base.schedule().end() != null ? base.schedule()
+                : new GigSchedule(base.schedule().start(), order.stream()
+                        .map(v -> v.gig().schedule().end())
+                        .filter(end -> end != null && end.isAfter(base.schedule().start()))
+                        .findFirst().orElse(null));
+
+        return new Gig(base.title(), schedule, base.location(), lineup, admission,
+                firstText(order, Gig::description), firstText(order, Gig::facebookUrl),
+                firstText(order, Gig::ticketUrl), firstText(order, Gig::posterImageUrl), cancelled);
+    }
+
+    private static String firstText(List<Version> order, Function<Gig, String> field) {
+        return order.stream()
+                .map(v -> field.apply(v.gig()))
+                .filter(Objects::nonNull)
+                .filter(s -> !s.isBlank())
+                .findFirst()
+                .orElse(null);
+    }
+}

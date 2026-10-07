@@ -12,7 +12,7 @@ public record Location(String venue, String city, Country country) {
             throw new IllegalArgumentException("gig city is required");
         }
         city = city.trim();
-        venue = (venue == null || venue.isBlank()) ? null : venue.trim();
+        venue = (venue == null || venue.isBlank() || venue.trim().equalsIgnoreCase("TBA")) ? null : venue.trim();
     }
 
     /** Venue for display/publishing; "TBA" when not yet known. */

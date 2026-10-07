@@ -21,6 +21,8 @@ import java.util.concurrent.TimeUnit;
 
 class BandzoneHtmlFetcher {
     private static final String BASE_URL = "https://bandzone.cz";
+    /** Pseudo-year for the band's "Plánované koncerty" (planned gigs) tab. */
+    private static final String UPCOMING = "upcoming";
     private static final Logger logger = LoggerFactory.getLogger(BandzoneHtmlFetcher.class);
 
     Elements fetchAllGigs(String bandSlug) {
@@ -40,9 +42,12 @@ class BandzoneHtmlFetcher {
         List<String> years = parseYears(document);
         Elements articles = new Elements();
 
-        ExecutorService executorService = Executors.newFixedThreadPool(years.size());
-        List<Future<Elements>> futureList = new ArrayList<>(years.size());
-        years.forEach(year -> {
+        // the year tabs list played gigs only; planned ones are on the separate "upcoming" tab
+        List<String> pages = new ArrayList<>(years);
+        pages.add(UPCOMING);
+        ExecutorService executorService = Executors.newFixedThreadPool(pages.size());
+        List<Future<Elements>> futureList = new ArrayList<>(pages.size());
+        pages.forEach(year -> {
             futureList.add(executorService.submit(() -> getArticlesForYear(bandSlug, year)));
             logger.debug("[{}] - submitted task for year {}", bandSlug, year);
         });
@@ -76,7 +81,8 @@ class BandzoneHtmlFetcher {
     private Elements getArticlesForYear(String bandSlug, String year) {
         try {
             logger.debug("Downloading data for year {}", year);
-            String uriString = UriComponentsBuilder.fromUriString(BASE_URL).pathSegment(bandSlug).queryParam("at", "gig").queryParam("gy", year).build().toUriString();
+            UriComponentsBuilder uri = UriComponentsBuilder.fromUriString(BASE_URL).pathSegment(bandSlug).queryParam("at", "gig");
+            String uriString = (UPCOMING.equals(year) ? uri : uri.queryParam("gy", year)).build().toUriString();
             Elements elements = Jsoup.connect(uriString).get().select("article.gig");
             logger.debug("Data for year {} downloaded", year);
             return elements;

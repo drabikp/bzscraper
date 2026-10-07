@@ -1,6 +1,7 @@
 package sk.drabikp.bzscraper.application.port.out;
 
 import sk.drabikp.bzscraper.domain.model.Gig;
+import sk.drabikp.bzscraper.domain.model.ImportedGig;
 
 import java.util.List;
 
@@ -28,6 +29,9 @@ public interface BitSession extends AutoCloseable {
      * canceled" as the reason. An event that is already gone is not an error.
      */
     void deleteEvent(String eventId, boolean cancelled) throws BitUploadException;
+
+    /** Every event of the artist on Bandsintown — upcoming and past — with its event id. */
+    List<ImportedGig> listEvents() throws BitUploadException;
 
     /** Releases the session (closes the browser). Never throws. */
     @Override

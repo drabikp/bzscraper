@@ -81,4 +81,19 @@ class GigTest {
         assertThat(gig.cancelled()).isFalse();
         assertThat(cancelled.reactivate().cancelled()).isFalse();
     }
+
+    @Test
+    void a_gig_without_a_venue_is_identified_by_its_city() {
+        java.time.ZonedDateTime start = java.time.ZonedDateTime.of(2024, 6, 15, 20, 0, 0, 0,
+                java.time.ZoneId.of("Europe/Prague"));
+        Gig petrvald = Gig.create("Eufory", GigSchedule.startingAt(start),
+                new Location(null, "Petřvald", Country.CZECHIA), java.util.List.of(), Admission.free(),
+                null, null, null, null);
+        Gig presov = Gig.create("Dobrý festival", GigSchedule.startingAt(start),
+                new Location("TBA ", "Prešov", Country.SLOVAKIA), java.util.List.of(), Admission.free(),
+                null, null, null, null);
+
+        org.assertj.core.api.Assertions.assertThat(petrvald.id().venue()).isEqualTo("@petřvald");
+        org.assertj.core.api.Assertions.assertThat(petrvald.id()).isNotEqualTo(presov.id());
+    }
 }

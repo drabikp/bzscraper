@@ -28,13 +28,15 @@ Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
 - **domain/** — framework-free core.
   - `model/` — `Gig` aggregate (immutable record; invariants in the compact
     constructor) built from value objects `GigSchedule`, `Location`, `Admission`;
-    identified by `GigId` (start date + normalized venue — it **changes** when an edit
-    moves the date or venue). `Platform`, `PublishResult`/`PublishStatus`,
+    identified by `GigId` (start date + normalized venue, or `@` + city when the venue is
+    unknown/"TBA" — it **changes** when an edit moves the date or venue). `CityName`
+    compares city spellings across platforms (accents, "Prague" = "Praha", "Vsetín 1"). `Platform`, `PublishResult`/`PublishStatus`,
     `PlatformResult` (outcome of one update/withdraw on one platform),
-    `WithdrawAction` (CANCEL/DELETE), reconciliation types. `GigSummary` is the legacy
-    scraped record.
-  - `service/` — `GigReconciliation` (import diff), `GigDateFilter`,
-    `GigSummaryToGigMapper`.
+    `WithdrawAction` (CANCEL/DELETE), `Publication` (a gig's copy on a platform), import
+    types (`ImportedGig`, `ImportProposal`, `ImportPlan`, `ImportDecision`,
+    `ImportResult`). `GigSummary` is the legacy scraped record.
+  - `service/` — `ImportPlanner` (multi-platform import plan), `GigMerge`,
+    `GigDateFilter`, `GigSummaryToGigMapper`.
 - **application/** — use cases and the ports they depend on.
   - `port/in/` — catalog (`SaveGig`, `ListGigs`, `UpdateGig`, `CancelGig`,
     `DeleteGig`), `PublishGigsUseCase`, `WithdrawGigsUseCase`, `ResyncGigUseCase`,
@@ -88,6 +90,21 @@ reactivate  GigResyncService.reactivate: Bandzone can't un-cancel, so DELETE the
 The UI runs platform work on a `TaskExecutor` and pushes results back via `ui.access`.
 Editing a cancelled gig keeps it cancelled (`GigForm.toGig()` always builds an active gig).
 
+## Import (`/import`)
+
+Initial (and repeatable) import of the band's existing gigs, upcoming and past, from
+any platform, LINKED to the platform events so they are managed from the catalog
+instead of published again. `GigImporter` per platform returns `ImportedGig`s
+(gig + platform id): Bandzone scrapes the public band page (year tabs + the "planned"
+tab) keeping the concert id and cancelled state; Bandsintown reads the portal.
+`ImportPlanner`: skip platform events already linked; group by `GigId` with the
+catalog gig and across platforms; else SUGGEST a match on same date + city (only when
+the candidate is unique) — the user confirms (default: unconfirmed = import each copy
+on its own). Where versions differ (title/time/venue/city) the user picks which to
+keep (default catalog > Bandzone > Bandsintown); `GigMerge` fills gaps from the other
+versions. `GigImportService.apply` saves + records links in one transaction. Never
+deletes.
+
 ## Bandzone (Selenium)
 
 `BandzoneGigProvider`/`BandzoneGigImporter` scrape read-only. Writes drive the
@@ -136,6 +153,8 @@ bzscraper.bandsintown.pacing.min-ms / .max-ms             # human pauses between
   to confirm PUBLISHED. Silent = "Do Not Announce = Y" + switch off (`announced_at`
   2000-01-01).
 - **Update** — Bulk Upload of a row WITH `Event Id` (+ `Status`) edits the event in place.
+- **List (import)** — Upcoming + Past tabs' event lists (past is paged: `x-next-page`,
+  more load on scroll) → `BitEventMapper` (no entry info on Bandsintown).
 - **Cancel/Delete** — Bandsintown has no cancelled state: both remove the event via the
   row's "⋯" → Delete, reason CANCELED or OTHER. Already-gone = success (so reactivate =
   delete no-op + create). Editing a cancelled gig skips Bandsintown.
@@ -152,7 +171,7 @@ H2 file DB at `./data/bzscraper-gigs` (`bzscraper.db.path`). The schema is owned
 **Flyway** (`src/main/resources/db/migration/V<n>__*.sql`); Hibernate runs with
 `ddl-auto=validate`, so every entity change needs a new migration (tests run the
 migrations on an in-memory H2 and fail on a mismatch). A pre-Flyway database is
-baselined at V1. The H2 version is pinned in `pom.xml` (`h2.version`) because its file
+baselined at V1. V3 re-keys venue-less gigs (and their publications) to the `@city` identity. The H2 version is pinned in `pom.xml` (`h2.version`) because its file
 format changes between versions. `H2ScriptBackup` writes a plain-SQL `SCRIPT` backup on
 every start to `./data/backups` (one per day, newest 14 kept); restore with
 `org.h2.tools.RunScript`.

@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import sk.drabikp.bzscraper.application.port.out.BitSession;
 import sk.drabikp.bzscraper.application.port.out.BitUploadException;
 import sk.drabikp.bzscraper.domain.model.Gig;
+import sk.drabikp.bzscraper.domain.model.ImportedGig;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -21,6 +22,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -35,6 +37,8 @@ import java.util.function.Predicate;
  *   <li><b>update</b> — Bulk Upload of a CSV row WITH the event id edits that event.</li>
  *   <li><b>delete</b> — the event's "⋯" menu → Delete, with a reason
  *       ("canceled" or "other").</li>
+ *   <li><b>list</b> — the Upcoming and Past tabs' event lists; the past list comes 20 at a
+ *       time ({@code x-next-page}), and more load as the page is scrolled.</li>
  * </ul>
  * The portal's own replies are read by wrapping {@code window.fetch} in the page (a
  * hand-made API call would lack the portal's request signature).
@@ -45,7 +49,13 @@ final class SeleniumBitSession implements BitSession {
     private static final Logger logger = LoggerFactory.getLogger(SeleniumBitSession.class);
     private static final Duration REPLY_WAIT = Duration.ofSeconds(90);
 
-    private static final String CAPTURE_REPLIES = """
+    /**
+     * Records the portal's event replies in {@code window.__bz}. Registered to run before
+     * any page script (see {@link SeleniumBitPortalClient}), so even the lists a page
+     * fetches while loading are seen; also run after load as a fallback.
+     */
+    static final String CAPTURE_REPLIES = """
+            (() => {
             if (window.__bzHooked) return;
             window.__bzHooked = true;
             window.__bz = [];
@@ -58,11 +68,13 @@ final class SeleniumBitSession implements BitSession {
                 reply.then(r => r.clone().text().then(t => {
                   let json = null;
                   try { json = JSON.parse(t); } catch (e) {}
-                  window.__bz.push({method, url, status: r.status, json, text: t.slice(0, 2000)});
+                  window.__bz.push({method, url, status: r.status, json, text: t.slice(0, 2000),
+                                    next: r.headers.get('x-next-page')});
                 })).catch(e => window.__bz.push({method, url, status: -1, json: null, text: String(e)}));
               }
               return reply;
-            };""";
+            };
+            })();""";
 
     /** Marks the "⋯" button of the index-th listed event after checking its city and day. */
     private static final String MARK_ROW = """
@@ -286,6 +298,81 @@ final class SeleniumBitSession implements BitSession {
         pacer.pause();
     }
 
+    // --- list (import) ---
+
+    private static final int MAX_PAST_PAGES = 50;
+
+    @Override
+    public List<ImportedGig> listEvents() throws BitUploadException {
+        try {
+            Map<String, Map<String, Object>> byId = new LinkedHashMap<>();
+            for (Map<String, Object> event : upcomingEvents()) {
+                byId.putIfAbsent(idOf(event), event);
+            }
+            pacer.pause();
+            for (Map<String, Object> event : pastEvents()) {
+                byId.putIfAbsent(idOf(event), event);
+            }
+            List<ImportedGig> gigs = new ArrayList<>();
+            byId.values().forEach(event -> BitEventMapper.toImported(event).ifPresent(gigs::add));
+            return gigs;
+        } catch (BitUploadException | RuntimeException e) {
+            SeleniumBitPortalClient.saveScreenshot(driver, "list");
+            if (e instanceof BitUploadException bit) {
+                throw bit;
+            }
+            throw new BitUploadException("Could not read the Bandsintown events: " + e.getMessage(), e);
+        }
+    }
+
+    /** All past events: the first 20 come with the tab, the rest load as the list is scrolled. */
+    private List<Map<String, Object>> pastEvents() throws BitUploadException {
+        openEventsTab("past");
+        Predicate<Map<String, Object>> pastList = r -> "GET".equals(r.get("method"))
+                && String.valueOf(r.get("url")).contains("past=true");
+        Map<String, Object> reply = awaitReply(0, pastList, "the past events");
+        int mark;
+        List<Map<String, Object>> events = new ArrayList<>(BitResponses.events(reply));
+        for (int page = 1; hasNext(reply) && page < MAX_PAST_PAGES; page++) {
+            mark = replyCount();
+            pacer.pause();
+            loadMore();
+            try {
+                reply = awaitReply(mark, pastList, "more past events", Duration.ofSeconds(30));
+            } catch (BitUploadException e) {
+                logger.warn("Bandsintown: stopped after {} past events — the list did not load more", events.size());
+                break;
+            }
+            events.addAll(BitResponses.events(reply));
+        }
+        return events;
+    }
+
+    private static boolean hasNext(Map<String, Object> reply) {
+        Object next = reply.get("next");
+        return next != null && !String.valueOf(next).isBlank() && !"null".equals(String.valueOf(next));
+    }
+
+    /** Scrolls to the end of the list (and presses "load more" if there is such a button). */
+    private void loadMore() {
+        js(LOAD_MORE);
+        for (WebElement button : driver.findElements(By.xpath(
+                "//button[contains(translate(normalize-space(),'LOADMORESHW','loadmoreshw'),'more')]"))) {
+            if (button.isDisplayed()) {
+                pacer.click(driver, button);
+                return;
+            }
+        }
+    }
+
+    private static final String LOAD_MORE = """
+            window.scrollTo(0, document.body.scrollHeight);
+            for (const el of document.querySelectorAll('*')) {
+              if (el.scrollHeight > el.clientHeight + 50 && /(auto|scroll)/.test(getComputedStyle(el).overflowY)) {
+                el.scrollTop = el.scrollHeight;
+              }
+            }""";
+
     @Override
     public void close() {
         if (closed) {
@@ -350,10 +437,8 @@ final class SeleniumBitSession implements BitSession {
 
     /** The upcoming events (published ones), as the portal lists them, in display order. */
     private List<Map<String, Object>> upcomingEvents() throws BitUploadException {
-        openEventsTab("past");
-        int mark = replyCount();
-        pacer.click(driver, firstVisible(By.xpath("//a[normalize-space()='Upcoming Events']")));
-        Map<String, Object> reply = awaitReply(mark, r -> "GET".equals(r.get("method"))
+        openEventsTab("upcoming");
+        Map<String, Object> reply = awaitReply(0, r -> "GET".equals(r.get("method"))
                 && String.valueOf(r.get("url")).contains("past=false"), "the event list");
         if (BitResponses.httpStatus(reply) != 200) {
             throw new BitUploadException("Could not read the Bandsintown event list — " + BitResponses.describe(reply));
@@ -382,11 +467,16 @@ final class SeleniumBitSession implements BitSession {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private Map<String, Object> awaitReply(int from, Predicate<Map<String, Object>> match, String what)
             throws BitUploadException {
+        return awaitReply(from, match, what, REPLY_WAIT);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> awaitReply(int from, Predicate<Map<String, Object>> match, String what,
+                                           Duration timeout) throws BitUploadException {
         try {
-            return new WebDriverWait(driver, REPLY_WAIT).until(d -> {
+            return new WebDriverWait(driver, timeout).until(d -> {
                 Object replies = js("return (window.__bz || []).slice(arguments[0]);", from);
                 if (replies instanceof List<?> list) {
                     for (Object reply : list) {

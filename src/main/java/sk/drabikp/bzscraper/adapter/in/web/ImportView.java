@@ -4,15 +4,20 @@ import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.checkbox.Checkbox;
+import com.vaadin.flow.component.checkbox.CheckboxGroup;
 import com.vaadin.flow.component.combobox.ComboBox;
+import com.vaadin.flow.component.details.Details;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.grid.GridVariant;
+import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H1;
-import com.vaadin.flow.component.html.H2;
+import com.vaadin.flow.component.html.Paragraph;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.notification.Notification;
+import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import com.vaadin.flow.component.select.Select;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
@@ -20,37 +25,55 @@ import com.vaadin.flow.theme.lumo.LumoUtility;
 import org.springframework.core.task.TaskExecutor;
 import sk.drabikp.bzscraper.application.port.in.ImportGigsUseCase;
 import sk.drabikp.bzscraper.domain.model.Gig;
-import sk.drabikp.bzscraper.domain.model.GigId;
+import sk.drabikp.bzscraper.domain.model.ImportDecision;
+import sk.drabikp.bzscraper.domain.model.ImportPlan;
+import sk.drabikp.bzscraper.domain.model.ImportProposal;
+import sk.drabikp.bzscraper.domain.model.ImportProposal.Version;
+import sk.drabikp.bzscraper.domain.model.ImportResult;
 import sk.drabikp.bzscraper.domain.model.Platform;
-import sk.drabikp.bzscraper.domain.model.ReconciliationEntry;
-import sk.drabikp.bzscraper.domain.model.ReconciliationResult;
 
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 /**
- * Import gigs from a platform and reconcile against the local catalog. Shows what's
- * NEW (pick which to add) and what CONFLICTS (choose keep-local or take-imported);
- * MATCHED and LOCAL-ONLY are reported for awareness. Applying only ever adds/updates
- * the catalog — never deletes.
+ * Initial import: reads the band's gigs (upcoming and past) from the chosen platforms
+ * and proposes, per gig, to add it to the catalog or link it to the catalog gig it
+ * already is — so existing events are managed from here instead of published again.
+ * The user decides per row: import or not, whether a suggested match (same date and
+ * city, venue written differently) is really one gig, and which version's details to
+ * keep where the platforms disagree.
  */
 @Route("import")
 @PageTitle("Import gigs")
 public class ImportView extends VerticalLayout {
 
-    private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("d MMM yyyy HH:mm");
+    private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("EEE d MMM yyyy HH:mm");
+    private static final DateTimeFormatter END = DateTimeFormatter.ofPattern("d MMM HH:mm");
+    private static final String ALL = "All gigs";
+    private static final String NEEDS_DECISION = "Needs a decision";
+    private static final String UPCOMING = "Upcoming only";
 
     private final ImportGigsUseCase importGigs;
     private final TaskExecutor taskExecutor;
 
-    private final Span summary = new Span();
-    private final Grid<ReconciliationEntry> newGrid = new Grid<>();
-    private final Grid<ReconciliationEntry> conflictGrid = new Grid<>();
-    private final Map<GigId, Checkbox> takeImported = new HashMap<>();
-    private final Button apply = new Button("Apply to catalog");
+    private final Div summary = new Div();
+    private final Grid<ImportProposal> grid = new Grid<>();
+    private final Select<String> show = new Select<>();
+    private final Button apply = new Button("Import selected");
+    private final Map<ImportProposal, Row> rows = new IdentityHashMap<>();
+
+    /** The user's choices for one proposal, edited in the grid. */
+    private static final class Row {
+        boolean include = true;
+        boolean sameGig;
+        Version chosen;
+    }
 
     public ImportView(ImportGigsUseCase importGigs, TaskExecutor taskExecutor) {
         this.importGigs = importGigs;
@@ -62,113 +85,174 @@ public class ImportView extends VerticalLayout {
         H1 title = new H1("Import gigs");
         title.addClassNames(LumoUtility.FontSize.XLARGE);
         RouterLink back = new RouterLink("← Catalog", GigListView.class);
+        Paragraph intro = new Paragraph("Bring the band's existing gigs — upcoming and past — from the platforms "
+                + "into the catalog, linked to their events there, so they are edited and cancelled from here "
+                + "instead of published again. Reading Bandsintown takes a minute or two.");
+        intro.addClassNames(LumoUtility.TextColor.SECONDARY);
 
-        ComboBox<Platform> platform = new ComboBox<>("Platform");
-        platform.setItems(importGigs.importablePlatforms());
-        platform.setItemLabelGenerator(PublishSummaries::label);
-        importGigs.importablePlatforms().stream().findFirst().ifPresent(platform::setValue);
+        CheckboxGroup<Platform> platforms = new CheckboxGroup<>("Read from");
+        platforms.setItems(importGigs.importablePlatforms());
+        platforms.setItemLabelGenerator(PublishSummaries::label);
+        platforms.setValue(importGigs.importablePlatforms());
+        Button read = new Button("Read platforms");
+        read.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+        read.addClickListener(e -> onRead(read, platforms));
+        HorizontalLayout controls = new HorizontalLayout(platforms, read);
+        controls.setAlignItems(FlexComponent.Alignment.END);
 
-        Button reconcile = new Button("Reconcile");
-        reconcile.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-        reconcile.addClickListener(e -> onReconcile(reconcile, platform.getValue()));
+        show.setLabel("Show");
+        show.setItems(ALL, NEEDS_DECISION, UPCOMING);
+        show.setValue(ALL);
+        show.addValueChangeListener(e -> applyFilter());
 
-        HorizontalLayout controls = new HorizontalLayout(platform, reconcile);
-        controls.setDefaultVerticalComponentAlignment(FlexEnd());
-        controls.setSpacing(true);
-
-        newGrid.setSelectionMode(Grid.SelectionMode.MULTI);
-        newGrid.addThemeVariants(GridVariant.LUMO_ROW_STRIPES);
-        newGrid.addColumn(e -> whenOf(e.imported())).setHeader("When").setAutoWidth(true);
-        newGrid.addColumn(e -> e.imported().title()).setHeader("Event").setAutoWidth(true);
-        newGrid.addColumn(e -> e.imported().location().displayVenue()).setHeader("Venue").setAutoWidth(true);
-        newGrid.addColumn(e -> e.imported().location().city()).setHeader("City").setAutoWidth(true);
-        newGrid.setAllRowsVisible(true);
-
-        conflictGrid.addThemeVariants(GridVariant.LUMO_ROW_STRIPES);
-        conflictGrid.addColumn(e -> whenOf(e.local())).setHeader("When").setAutoWidth(true);
-        conflictGrid.addColumn(e -> describe(e.local())).setHeader("In catalog").setAutoWidth(true);
-        conflictGrid.addColumn(e -> describe(e.imported())).setHeader("On platform").setAutoWidth(true);
-        conflictGrid.addComponentColumn(e -> {
-            Checkbox cb = new Checkbox();
-            takeImported.put(e.id(), cb);
-            return cb;
-        }).setHeader("Take platform version").setAutoWidth(true);
-        conflictGrid.setAllRowsVisible(true);
+        configureGrid();
 
         apply.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
         apply.setEnabled(false);
         apply.addClickListener(e -> onApply());
+        HorizontalLayout footer = new HorizontalLayout(show, apply);
+        footer.setAlignItems(FlexComponent.Alignment.END);
 
-        add(title, back, controls, summary,
-                new H2("New"), newGrid, new H2("Conflicts"), conflictGrid, apply);
+        add(title, back, intro, controls, summary, footer, grid);
+        setFlexGrow(1, grid);
     }
 
-    private static com.vaadin.flow.component.orderedlayout.FlexComponent.Alignment FlexEnd() {
-        return com.vaadin.flow.component.orderedlayout.FlexComponent.Alignment.END;
+    private void configureGrid() {
+        grid.addThemeVariants(GridVariant.LUMO_ROW_STRIPES, GridVariant.LUMO_WRAP_CELL_CONTENT);
+        grid.setSizeFull();
+        grid.addComponentColumn(p -> {
+            Checkbox include = new Checkbox(rows.get(p).include);
+            include.addValueChangeListener(e -> rows.get(p).include = e.getValue());
+            return include;
+        }).setHeader("Import").setAutoWidth(true).setFlexGrow(0);
+        grid.addColumn(p -> p.defaultVersion().gig().schedule().start().format(WHEN))
+                .setHeader("When").setAutoWidth(true).setFlexGrow(0);
+        grid.addColumn(p -> describe(p.defaultVersion().gig())).setHeader("Gig").setFlexGrow(1);
+        grid.addColumn(p -> p.copies().stream().map(c -> PublishSummaries.label(c.platform()))
+                .collect(Collectors.joining(" + "))).setHeader("Found on").setAutoWidth(true).setFlexGrow(0);
+        grid.addColumn(p -> p.inCatalog() ? "links to an existing gig" : "new")
+                .setHeader("Catalog").setAutoWidth(true).setFlexGrow(0);
+        grid.addComponentColumn(this::matchCell).setHeader("Same gig?").setAutoWidth(true).setFlexGrow(0);
+        grid.addComponentColumn(this::versionCell).setHeader("Keep details from").setFlexGrow(1);
     }
 
-    private void onReconcile(Button reconcile, Platform platform) {
-        if (platform == null) {
-            Notification.show("Pick a platform", 3000, Notification.Position.MIDDLE);
+    private com.vaadin.flow.component.Component matchCell(ImportProposal p) {
+        if (!p.suggested()) {
+            return new Span(p.copies().size() > 1 || p.inCatalog() ? "same date & venue" : "");
+        }
+        Checkbox same = new Checkbox("same date & city — confirm", rows.get(p).sameGig);
+        same.getElement().setProperty("title", "Ticked: one gig. Unticked: each copy is imported on its own.");
+        same.addValueChangeListener(e -> rows.get(p).sameGig = e.getValue());
+        return same;
+    }
+
+    private com.vaadin.flow.component.Component versionCell(ImportProposal p) {
+        List<Version> versions = p.versions();
+        if (versions.size() == 1) {
+            return new Span("—");
+        }
+        ComboBox<Version> pick = new ComboBox<>();
+        pick.setItems(versions);
+        pick.setItemLabelGenerator(v -> v.source() + ": " + describe(v.gig()) + ", "
+                + v.gig().schedule().start().format(WHEN)
+                + (v.gig().schedule().end() != null ? "–" + v.gig().schedule().end().format(END) : ""));
+        pick.setValue(rows.get(p).chosen);
+        pick.setWidthFull();
+        pick.addValueChangeListener(e -> {
+            if (e.getValue() != null) {
+                rows.get(p).chosen = e.getValue();
+            }
+        });
+        return pick;
+    }
+
+    private void onRead(Button read, CheckboxGroup<Platform> platforms) {
+        if (platforms.getValue().isEmpty()) {
+            Notification.show("Pick at least one platform", 3000, Notification.Position.MIDDLE);
             return;
         }
         UI ui = UI.getCurrent();
-        reconcile.setEnabled(false);
-        reconcile.setText("Reconciling…");
+        read.setEnabled(false);
+        read.setText("Reading…");
+        apply.setEnabled(false);
         taskExecutor.execute(() -> {
             try {
-                ReconciliationResult result = importGigs.reconcile(platform);
-                ui.access(() -> {
-                    showResult(result);
-                    reconcile.setText("Reconcile");
-                    reconcile.setEnabled(true);
-                });
+                ImportPlan plan = importGigs.plan(platforms.getValue());
+                ui.access(() -> showPlan(plan));
             } catch (RuntimeException ex) {
+                ui.access(() -> Notification.show("Reading failed: " + ex.getMessage(), 6000,
+                        Notification.Position.MIDDLE));
+            } finally {
                 ui.access(() -> {
-                    Notification.show("Import failed: " + ex.getMessage(), 6000, Notification.Position.MIDDLE);
-                    reconcile.setText("Reconcile");
-                    reconcile.setEnabled(true);
+                    read.setText("Read platforms");
+                    read.setEnabled(true);
                 });
             }
         });
     }
 
-    private void showResult(ReconciliationResult result) {
-        summary.setText("New: " + result.added().size()
-                + "   ·   Conflicts: " + result.conflicts().size()
-                + "   ·   Matched: " + result.matched().size()
-                + "   ·   Only in catalog: " + result.localOnly().size());
-        newGrid.setItems(result.added());
-        result.added().forEach(newGrid::select); // pre-select all new
-        takeImported.clear();
-        conflictGrid.setItems(result.conflicts());
-        apply.setEnabled(!result.added().isEmpty() || !result.conflicts().isEmpty());
+    private void showPlan(ImportPlan plan) {
+        rows.clear();
+        for (ImportProposal p : plan.proposals()) {
+            ImportDecision byDefault = ImportDecision.byDefault(p);
+            Row row = new Row();
+            row.include = byDefault.include();
+            row.sameGig = byDefault.sameGig();
+            row.chosen = byDefault.chosen();
+            rows.put(p, row);
+        }
+
+        summary.removeAll();
+        List<ImportProposal> proposals = plan.proposals();
+        long added = proposals.stream().filter(p -> !p.inCatalog()).count();
+        long suggested = proposals.stream().filter(ImportProposal::suggested).count();
+        long conflicts = proposals.stream().filter(ImportProposal::hasConflict).count();
+        summary.add(new Paragraph(added + " new · " + (proposals.size() - added) + " to link to catalog gigs · "
+                + suggested + " suggested matches to confirm · " + conflicts + " with differing details · "
+                + plan.alreadyLinked() + " already linked"));
+        plan.failures().forEach((platform, reason) -> {
+            Span failure = new Span(PublishSummaries.label(platform) + " could not be read: " + reason);
+            failure.addClassNames(LumoUtility.TextColor.ERROR);
+            summary.add(new Div(failure));
+        });
+        if (!plan.skipped().isEmpty()) {
+            VerticalLayout list = new VerticalLayout();
+            list.setPadding(false);
+            plan.skipped().forEach(s -> list.add(new Span(s)));
+            summary.add(new Details(plan.skipped().size() + " left out", list));
+        }
+
+        grid.setItems(new ArrayList<>(proposals));
+        applyFilter();
+        apply.setEnabled(!proposals.isEmpty());
+    }
+
+    private void applyFilter() {
+        Predicate<ImportProposal> filter = switch (show.getValue()) {
+            case NEEDS_DECISION -> p -> p.suggested() || p.hasConflict();
+            case UPCOMING -> p -> !p.date().isBefore(LocalDate.now());
+            default -> p -> true;
+        };
+        grid.getListDataView().setFilter(filter::test);
     }
 
     private void onApply() {
-        List<Gig> toSave = new ArrayList<>();
-        newGrid.asMultiSelect().getValue().forEach(e -> toSave.add(e.imported()));
-        conflictGrid.getListDataView().getItems().forEach(e -> {
-            Checkbox cb = takeImported.get(e.id());
-            if (cb != null && Boolean.TRUE.equals(cb.getValue())) {
-                toSave.add(e.imported());
-            }
-        });
-        if (toSave.isEmpty()) {
+        List<ImportDecision> decisions = new ArrayList<>();
+        rows.forEach((p, row) -> decisions.add(new ImportDecision(p, row.include, row.sameGig, row.chosen)));
+        if (decisions.stream().noneMatch(ImportDecision::include)) {
             Notification.show("Nothing selected to import", 3000, Notification.Position.MIDDLE);
             return;
         }
-        importGigs.apply(toSave);
-        Notification.show("Imported " + toSave.size() + " gig(s) into the catalog", 4000,
-                Notification.Position.BOTTOM_START);
+        ImportResult result = importGigs.apply(decisions);
+        Notification.show("Imported: " + result.added() + " added, " + result.updated() + " updated, "
+                        + result.linked() + " platform events linked"
+                        + (result.skipped() > 0 ? ", " + result.skipped() + " skipped" : "") + ".",
+                6000, Notification.Position.BOTTOM_START);
         UI.getCurrent().navigate(GigListView.class);
     }
 
-    private static String whenOf(Gig gig) {
-        return gig.schedule().start().format(WHEN);
-    }
-
     private static String describe(Gig gig) {
-        return gig.title() + " @ " + gig.location().displayVenue() + " (" + gig.admission().type() + ")";
+        return gig.title() + " — " + gig.location().displayVenue() + ", " + gig.location().city()
+                + (gig.cancelled() ? " (cancelled)" : "");
     }
 }

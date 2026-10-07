@@ -4,17 +4,21 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import sk.drabikp.bzscraper.application.port.out.GigImporter;
 import sk.drabikp.bzscraper.application.port.out.GigProvider;
-import sk.drabikp.bzscraper.domain.model.Gig;
+import sk.drabikp.bzscraper.domain.model.GigSummary;
+import sk.drabikp.bzscraper.domain.model.ImportedGig;
 import sk.drabikp.bzscraper.domain.model.Platform;
 import sk.drabikp.bzscraper.domain.service.GigSummaryToGigMapper;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
+import java.util.Set;
 
 /**
- * Imports gigs from Bandzone by scraping the configured band and mapping the scraped
- * read models to {@link Gig} aggregates. Scraped gigs that can't form a valid gig
- * (no start/city) are dropped at the mapping boundary.
+ * Imports the configured band's Bandzone gigs (planned and played) by scraping its
+ * public page. Each keeps its Bandzone concert id — the same id publishing records — so
+ * importing links the catalog gig to the existing concert. Scraped gigs that can't form
+ * a valid gig (no start/city) are dropped at the mapping boundary.
  */
 @Component
 public class BandzoneGigImporter implements GigImporter {
@@ -34,13 +38,19 @@ public class BandzoneGigImporter implements GigImporter {
     }
 
     @Override
-    public List<Gig> importGigs() {
+    public List<ImportedGig> importGigs() {
         if (bandSlug.isBlank()) {
             throw new IllegalStateException("Bandzone band slug not configured (bzscraper.bandzone.band-slug)");
         }
-        return gigProvider.findByBand(bandSlug).stream()
-                .map(GigSummaryToGigMapper::toGig)
-                .flatMap(Optional::stream)
-                .toList();
+        List<ImportedGig> gigs = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (GigSummary summary : gigProvider.findByBand(bandSlug)) {
+            if (summary.bzId() == null || summary.bzId().isBlank() || !seen.add(summary.bzId())) {
+                continue;
+            }
+            GigSummaryToGigMapper.toGig(summary)
+                    .ifPresent(gig -> gigs.add(new ImportedGig(Platform.BANDZONE, gig, summary.bzId())));
+        }
+        return gigs;
     }
 }

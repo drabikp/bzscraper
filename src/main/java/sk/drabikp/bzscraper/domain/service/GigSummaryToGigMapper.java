@@ -15,7 +15,7 @@ import java.util.Optional;
  * aggregate requires (title, start, city) yields {@link Optional#empty()} rather
  * than an invalid {@code Gig}. Parses country out of the scraped city string
  * ("Hořice, ČR" -> "Hořice" + {@link Country#CZECHIA}) and infers admission from the
- * free-text entry fee.
+ * free-text entry fee. A gig Bandzone shows as cancelled stays cancelled.
  */
 public final class GigSummaryToGigMapper {
 
@@ -32,8 +32,9 @@ public final class GigSummaryToGigMapper {
         }
         Location location = new Location(summary.venue(), city, resolveCountry(summary.city()));
         GigSchedule schedule = new GigSchedule(summary.start(), summary.end());
-        return Optional.of(Gig.create(summary.title(), schedule, location, summary.bands(),
-                resolveAdmission(summary.entryFee()), null, null, null, null));
+        Gig gig = Gig.create(summary.title(), schedule, location, summary.bands(),
+                resolveAdmission(summary.entryFee()), null, null, null, null);
+        return Optional.of(summary.isCancelled() ? gig.cancel() : gig);
     }
 
     private static Country resolveCountry(String city) {

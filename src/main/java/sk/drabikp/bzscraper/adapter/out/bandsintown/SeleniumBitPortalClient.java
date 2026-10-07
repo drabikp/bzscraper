@@ -180,6 +180,9 @@ public class SeleniumBitPortalClient implements BitPortalClient {
         String userAgent = String.valueOf(driver.executeScript("return navigator.userAgent;"));
         driver.executeCdpCommand("Network.setUserAgentOverride",
                 Map.of("userAgent", userAgent.replace("HeadlessChrome", "Chrome"), "acceptLanguage", "en-US,en"));
+        // record the portal's replies from the first request of every page (see SeleniumBitSession)
+        driver.executeCdpCommand("Page.addScriptToEvaluateOnNewDocument",
+                Map.of("source", SeleniumBitSession.CAPTURE_REPLIES));
         return driver;
     }
 

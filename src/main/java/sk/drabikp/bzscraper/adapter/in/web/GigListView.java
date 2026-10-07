@@ -41,6 +41,7 @@ import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
@@ -159,7 +160,9 @@ public class GigListView extends VerticalLayout {
 
     private void refresh() {
         publications = listPublications.publicationsByGig();
-        grid.setItems(listGigs.allGigs());
+        grid.setItems(listGigs.allGigs().stream()
+                .sorted(Comparator.comparing((Gig g) -> g.schedule().start()).reversed())
+                .toList());
     }
 
     /** The platforms the gig is published on, each linking to the gig's page there. */

@@ -1,22 +1,25 @@
 package sk.drabikp.bzscraper.application.port.in;
 
-import sk.drabikp.bzscraper.domain.model.Gig;
+import sk.drabikp.bzscraper.domain.model.ImportDecision;
+import sk.drabikp.bzscraper.domain.model.ImportPlan;
+import sk.drabikp.bzscraper.domain.model.ImportResult;
 import sk.drabikp.bzscraper.domain.model.Platform;
-import sk.drabikp.bzscraper.domain.model.ReconciliationResult;
 
-import java.util.Collection;
+import java.util.List;
 import java.util.Set;
 
 /**
- * Imports gigs from a platform and reconciles them against the local catalog, then
- * applies the gigs the user chose (adds/updates). The catalog stays the source of
- * truth; import never deletes.
+ * Brings the band's existing gigs from the platforms into the catalog, linked to their
+ * platform events — so they are managed from here (edit, cancel, re-sync) instead of
+ * being published again. Two steps: {@link #plan} reads the platforms and proposes what
+ * to add or link; {@link #apply} carries out the user's decisions. Import never deletes.
  */
 public interface ImportGigsUseCase {
 
     Set<Platform> importablePlatforms();
 
-    ReconciliationResult reconcile(Platform platform);
+    /** Reads the given platforms; a platform that can't be read is reported, not fatal. */
+    ImportPlan plan(Set<Platform> platforms);
 
-    void apply(Collection<Gig> gigs);
+    ImportResult apply(List<ImportDecision> decisions);
 }
