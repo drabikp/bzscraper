@@ -9,6 +9,7 @@ import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.grid.GridVariant;
 import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.H1;
+import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -24,13 +25,16 @@ import sk.drabikp.bzscraper.application.port.in.CancelGigUseCase;
 import sk.drabikp.bzscraper.application.port.in.DeleteGigUseCase;
 import sk.drabikp.bzscraper.application.port.in.ExportGigsAsCsvUseCase;
 import sk.drabikp.bzscraper.application.port.in.ListGigsUseCase;
+import sk.drabikp.bzscraper.application.port.in.ListPublicationsUseCase;
 import sk.drabikp.bzscraper.application.port.in.PublishGigsUseCase;
 import sk.drabikp.bzscraper.application.port.in.ResyncGigUseCase;
 import sk.drabikp.bzscraper.application.port.in.UpdateGigUseCase;
 import sk.drabikp.bzscraper.application.port.in.WithdrawGigsUseCase;
 import sk.drabikp.bzscraper.domain.model.Gig;
+import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.Platform;
 import sk.drabikp.bzscraper.domain.model.PlatformResult;
+import sk.drabikp.bzscraper.domain.model.Publication;
 import sk.drabikp.bzscraper.domain.model.WithdrawAction;
 
 import java.io.ByteArrayInputStream;
@@ -39,12 +43,14 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
 
 /**
- * The gig catalog (DB source of truth): list stored gigs and publish, export, edit,
- * cancel/reactivate or delete them.
+ * The gig catalog (DB source of truth): list stored gigs — with where each one is
+ * published, linking to it there — and publish, export, edit, cancel/reactivate or
+ * delete them.
  */
 @Route("")
 @PageTitle("Gig catalog")
@@ -53,6 +59,7 @@ public class GigListView extends VerticalLayout {
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("EEE d MMM yyyy HH:mm");
 
     private final ListGigsUseCase listGigs;
+    private final ListPublicationsUseCase listPublications;
     private final DeleteGigUseCase deleteGig;
     private final UpdateGigUseCase updateGig;
     private final CancelGigUseCase cancelGig;
@@ -62,12 +69,15 @@ public class GigListView extends VerticalLayout {
     private final TaskExecutor taskExecutor;
 
     private final Grid<Gig> grid = new Grid<>();
+    private Map<GigId, Map<Platform, Publication>> publications = Map.of();
 
-    public GigListView(ListGigsUseCase listGigs, DeleteGigUseCase deleteGig, UpdateGigUseCase updateGig,
+    public GigListView(ListGigsUseCase listGigs, ListPublicationsUseCase listPublications,
+                       DeleteGigUseCase deleteGig, UpdateGigUseCase updateGig,
                        CancelGigUseCase cancelGig, PublishGigsUseCase publishGigs,
                        WithdrawGigsUseCase withdrawGigs, ResyncGigUseCase resyncGig,
                        ExportGigsAsCsvUseCase exportCsv, TaskExecutor taskExecutor) {
         this.listGigs = listGigs;
+        this.listPublications = listPublications;
         this.deleteGig = deleteGig;
         this.updateGig = updateGig;
         this.cancelGig = cancelGig;
@@ -94,6 +104,7 @@ public class GigListView extends VerticalLayout {
         grid.addColumn(g -> g.location().city()).setHeader("City").setAutoWidth(true);
         grid.addColumn(g -> g.admission().type()).setHeader("Entry").setAutoWidth(true);
         grid.addColumn(g -> g.cancelled() ? "cancelled" : "").setHeader("").setAutoWidth(true);
+        grid.addComponentColumn(this::publishedOn).setHeader("Published on").setAutoWidth(true);
         grid.setSizeFull();
         grid.addItemDoubleClickListener(e -> openEditDialog(e.getItem()));
 
@@ -147,7 +158,26 @@ public class GigListView extends VerticalLayout {
     }
 
     private void refresh() {
+        publications = listPublications.publicationsByGig();
         grid.setItems(listGigs.allGigs());
+    }
+
+    /** The platforms the gig is published on, each linking to the gig's page there. */
+    private HorizontalLayout publishedOn(Gig gig) {
+        HorizontalLayout cell = new HorizontalLayout();
+        cell.setSpacing(true);
+        for (Publication publication : publications.getOrDefault(gig.id(), Map.of()).values()) {
+            PlatformLinks.Link link = PlatformLinks.of(publication, gig.cancelled());
+            if (link.href() == null) {
+                cell.add(new Span(link.text()));
+            } else {
+                Anchor anchor = new Anchor(link.href(), link.text() + " ↗");
+                anchor.setTarget("_blank");
+                anchor.getElement().setAttribute("rel", "noopener");
+                cell.add(anchor);
+            }
+        }
+        return cell;
     }
 
     private void openEditDialog(Gig gig) {
@@ -228,6 +258,7 @@ public class GigListView extends VerticalLayout {
             try {
                 var results = publishGigs.publish(platforms, gigs);
                 ui.access(() -> {
+                    refresh();
                     PublishSummaries.show(results);
                     publish.setText("Publish selected");
                     publish.setEnabled(true);
@@ -288,8 +319,10 @@ public class GigListView extends VerticalLayout {
         UI ui = UI.getCurrent();
         taskExecutor.execute(() -> {
             List<PlatformResult> all = work.get();
-            ui.access(() -> Notification.show(localDone + " " + platformSummary(all), 5000,
-                    Notification.Position.BOTTOM_START));
+            ui.access(() -> {
+                refresh();
+                Notification.show(localDone + " " + platformSummary(all), 5000, Notification.Position.BOTTOM_START);
+            });
         });
     }
 

@@ -3,6 +3,7 @@ package sk.drabikp.bzscraper.application.service;
 import sk.drabikp.bzscraper.application.port.in.CancelGigUseCase;
 import sk.drabikp.bzscraper.application.port.in.DeleteGigUseCase;
 import sk.drabikp.bzscraper.application.port.in.ListGigsUseCase;
+import sk.drabikp.bzscraper.application.port.in.ListPublicationsUseCase;
 import sk.drabikp.bzscraper.application.port.in.SaveGigUseCase;
 import sk.drabikp.bzscraper.application.port.in.UpdateGigUseCase;
 import sk.drabikp.bzscraper.application.port.out.GigRepository;
@@ -11,8 +12,13 @@ import sk.drabikp.bzscraper.application.port.out.Transactions;
 import sk.drabikp.bzscraper.domain.model.DateRange;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.GigId;
+import sk.drabikp.bzscraper.domain.model.Platform;
+import sk.drabikp.bzscraper.domain.model.Publication;
 
+import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Manages the local gig catalog (the source of truth) over the {@link GigRepository}.
@@ -22,7 +28,8 @@ import java.util.List;
  * records, in the same transaction, so they never point at a gig that no longer exists.
  */
 public class GigCatalogService
-        implements SaveGigUseCase, ListGigsUseCase, DeleteGigUseCase, UpdateGigUseCase, CancelGigUseCase {
+        implements SaveGigUseCase, ListGigsUseCase, DeleteGigUseCase, UpdateGigUseCase, CancelGigUseCase,
+        ListPublicationsUseCase {
 
     private final GigRepository gigRepository;
     private final PublishedGigStore publishedGigStore;
@@ -48,6 +55,15 @@ public class GigCatalogService
     @Override
     public List<Gig> gigsStartingWithin(DateRange range) {
         return gigRepository.findStartingWithin(range);
+    }
+
+    @Override
+    public Map<GigId, Map<Platform, Publication>> publicationsByGig() {
+        Map<GigId, Map<Platform, Publication>> byGig = new HashMap<>();
+        for (Publication p : publishedGigStore.all()) {
+            byGig.computeIfAbsent(p.gigId(), id -> new EnumMap<>(Platform.class)).put(p.platform(), p);
+        }
+        return byGig;
     }
 
     @Override

@@ -5,6 +5,7 @@ import org.springframework.transaction.annotation.Transactional;
 import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.Platform;
+import sk.drabikp.bzscraper.domain.model.Publication;
 
 import java.util.List;
 import java.util.Optional;
@@ -59,6 +60,15 @@ public class JpaPublishedGigStore implements PublishedGigStore {
         for (PublishedGigEntity old : records) {
             record(old.getKey().platform(), to, old.getExternalRef());
         }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Publication> all() {
+        return jpaRepository.findAll().stream()
+                .map(e -> new Publication(e.getKey().platform(),
+                        GigEntityMapper.deserializeId(e.getKey().gigId()), e.getExternalRef()))
+                .toList();
     }
 
     private static PublishedGigEntity.Key key(Platform platform, GigId gigId) {

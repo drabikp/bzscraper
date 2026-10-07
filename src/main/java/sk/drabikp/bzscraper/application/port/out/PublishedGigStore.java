@@ -2,7 +2,9 @@ package sk.drabikp.bzscraper.application.port.out;
 
 import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.Platform;
+import sk.drabikp.bzscraper.domain.model.Publication;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -29,4 +31,7 @@ public interface PublishedGigStore {
      * date or venue), keeping the external ids. No-op if nothing was recorded under {@code from}.
      */
     void move(GigId from, GigId to);
+
+    /** Every recorded publication, for showing where each gig is published. */
+    List<Publication> all();
 }

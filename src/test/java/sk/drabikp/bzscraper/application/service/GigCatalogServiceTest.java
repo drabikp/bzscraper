@@ -6,8 +6,12 @@ import sk.drabikp.bzscraper.application.port.out.GigRepository;
 import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.application.port.out.Transactions;
 import sk.drabikp.bzscraper.domain.model.Gig;
+import sk.drabikp.bzscraper.domain.model.GigId;
+import sk.drabikp.bzscraper.domain.model.Platform;
+import sk.drabikp.bzscraper.domain.model.Publication;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -107,5 +111,21 @@ class GigCatalogServiceTest {
         when(repository.findAll()).thenReturn(List.of(gig));
 
         assertThat(service.allGigs()).containsExactly(gig);
+    }
+
+    @Test
+    void publications_are_grouped_by_gig_and_platform() {
+        Gig a = TestGigs.gig("A", "Klub 007");
+        Gig b = TestGigs.gig("B", "Barrák");
+        when(publishedGigStore.all()).thenReturn(List.of(
+                new Publication(Platform.BANDZONE, a.id(), "100"),
+                new Publication(Platform.BANDSINTOWN, a.id(), "200"),
+                new Publication(Platform.BANDZONE, b.id(), null)));
+
+        Map<GigId, Map<Platform, Publication>> byGig = service.publicationsByGig();
+
+        assertThat(byGig.get(a.id())).containsOnlyKeys(Platform.BANDZONE, Platform.BANDSINTOWN);
+        assertThat(byGig.get(a.id()).get(Platform.BANDSINTOWN).externalRef()).isEqualTo("200");
+        assertThat(byGig.get(b.id())).containsOnlyKeys(Platform.BANDZONE);
     }
 }

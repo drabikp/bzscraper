@@ -47,7 +47,8 @@ Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
     strategies `BandzoneGigPublisher` / `BandsintownGigPublisher`, legacy
     `GigQueryService` / `GigCsvExportService`.
 - **adapter/in/** — `web/` Vaadin: `GigListView` (root route; the catalog grid with
-  add/edit/cancel/reactivate/re-sync/delete/publish), `AddGigView`, `ImportView`,
+  add/edit/cancel/reactivate/re-sync/delete/publish and a "Published on" column linking
+  each gig's platform page via `PlatformLinks`), `AddGigView`, `ImportView`,
   `GigForm`, `PublishSummaries`; `rest/` `GigSummaryEndpoint`.
 - **adapter/out/** — `persistence/` (JPA `GigEntity`/`JpaGigRepository`,
   `PublishedGigEntity`/`JpaPublishedGigStore`, `SpringTransactions`, `H2ScriptBackup`);

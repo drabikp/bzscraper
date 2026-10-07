@@ -7,6 +7,7 @@ import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.GigSchedule;
 import sk.drabikp.bzscraper.domain.model.Location;
 
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.Arrays;
@@ -26,6 +27,11 @@ final class GigEntityMapper {
 
     static String serializeId(GigId id) {
         return id.date() + "|" + id.venue();
+    }
+
+    static GigId deserializeId(String id) {
+        int separator = id.indexOf('|');
+        return new GigId(LocalDate.parse(id.substring(0, separator)), id.substring(separator + 1));
     }
 
     static GigEntity toEntity(Gig gig) {

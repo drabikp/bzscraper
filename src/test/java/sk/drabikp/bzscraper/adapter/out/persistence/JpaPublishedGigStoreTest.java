@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional;
 import sk.drabikp.bzscraper.TestGigs;
 import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.Platform;
+import sk.drabikp.bzscraper.domain.model.Publication;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -79,5 +80,15 @@ class JpaPublishedGigStoreTest {
 
         assertThat(store.externalRef(Platform.BANDZONE, klub)).contains("100");
         assertThat(store.isPublished(Platform.BANDZONE, barrak)).isFalse();
+    }
+
+    @Test
+    void lists_every_publication_with_its_gig_identity() {
+        store.record(Platform.BANDZONE, klub, "100");
+        store.record(Platform.BANDSINTOWN, barrak, null);
+
+        assertThat(store.all()).containsExactlyInAnyOrder(
+                new Publication(Platform.BANDZONE, klub, "100"),
+                new Publication(Platform.BANDSINTOWN, barrak, null));
     }
 }
