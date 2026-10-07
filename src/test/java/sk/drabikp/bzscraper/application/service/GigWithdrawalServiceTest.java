@@ -7,8 +7,8 @@ import sk.drabikp.bzscraper.application.port.out.GigWithdrawer;
 import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.Platform;
+import sk.drabikp.bzscraper.domain.model.PlatformResult;
 import sk.drabikp.bzscraper.domain.model.WithdrawAction;
-import sk.drabikp.bzscraper.domain.model.WithdrawResult;
 
 import java.util.List;
 import java.util.Optional;
@@ -39,7 +39,7 @@ class GigWithdrawalServiceTest {
         GigWithdrawer bz = withdrawerFor(Platform.BANDZONE);
         GigWithdrawalService service = new GigWithdrawalService(List.of(bz), store);
 
-        List<WithdrawResult> results = service.withdraw(id, WithdrawAction.DELETE);
+        List<PlatformResult> results = service.withdraw(id, WithdrawAction.DELETE);
 
         verify(bz).withdraw("561859", WithdrawAction.DELETE);
         verify(store).remove(Platform.BANDZONE, id);
@@ -64,7 +64,7 @@ class GigWithdrawalServiceTest {
         GigWithdrawer bz = withdrawerFor(Platform.BANDZONE);
         GigWithdrawalService service = new GigWithdrawalService(List.of(bz), store);
 
-        List<WithdrawResult> results = service.withdraw(id, WithdrawAction.DELETE);
+        List<PlatformResult> results = service.withdraw(id, WithdrawAction.DELETE);
 
         verify(bz, never()).withdraw(any(), any());
         assertThat(results).isEmpty();
@@ -77,7 +77,7 @@ class GigWithdrawalServiceTest {
         doThrow(new GigWithdrawalException("wizard broke")).when(bz).withdraw(any(), any());
         GigWithdrawalService service = new GigWithdrawalService(List.of(bz), store);
 
-        List<WithdrawResult> results = service.withdraw(id, WithdrawAction.DELETE);
+        List<PlatformResult> results = service.withdraw(id, WithdrawAction.DELETE);
 
         assertThat(results).singleElement().satisfies(r -> {
             assertThat(r.succeeded()).isFalse();

@@ -2,7 +2,8 @@ package sk.drabikp.bzscraper.domain.model;
 
 /**
  * Per-gig result of a publish run, tagged with the target {@link Platform}.
- * {@code detail} carries a reason for SKIPPED_INVALID / FAILED; {@code externalRef}
+ * {@code detail} carries a reason for SKIPPED_INVALID / FAILED, or a note on a PUBLISHED
+ * gig that was created but not completely (see {@link #publishedWithNote}); {@code externalRef}
  * carries the platform's id for a PUBLISHED gig when the platform returns one (null
  * otherwise) so the gig can later be updated/cancelled/deleted there.
  */
@@ -14,6 +15,11 @@ public record PublishResult(Platform platform, Gig gig, PublishStatus status, St
 
     public static PublishResult published(Platform platform, Gig gig, String externalRef) {
         return new PublishResult(platform, gig, PublishStatus.PUBLISHED, null, externalRef);
+    }
+
+    /** Created on the platform (so it must be recorded), but with a problem worth showing. */
+    public static PublishResult publishedWithNote(Platform platform, Gig gig, String externalRef, String note) {
+        return new PublishResult(platform, gig, PublishStatus.PUBLISHED, note, externalRef);
     }
 
     public static PublishResult alreadyUploaded(Platform platform, Gig gig) {

@@ -9,6 +9,7 @@ import sk.drabikp.bzscraper.application.port.out.GigImporter;
 import sk.drabikp.bzscraper.application.port.out.GigProvider;
 import sk.drabikp.bzscraper.application.port.out.GigPublisher;
 import sk.drabikp.bzscraper.application.port.out.GigRepository;
+import sk.drabikp.bzscraper.application.port.out.GigUpdater;
 import sk.drabikp.bzscraper.application.port.out.GigWithdrawer;
 import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.application.service.BandsintownGigPublisher;
@@ -18,6 +19,7 @@ import sk.drabikp.bzscraper.application.service.GigCsvExportService;
 import sk.drabikp.bzscraper.application.service.GigImportService;
 import sk.drabikp.bzscraper.application.service.GigPublishingService;
 import sk.drabikp.bzscraper.application.service.GigQueryService;
+import sk.drabikp.bzscraper.application.service.GigResyncService;
 import sk.drabikp.bzscraper.application.service.GigWithdrawalService;
 
 import java.util.List;
@@ -63,5 +65,11 @@ public class UseCaseConfiguration {
     @Bean
     GigWithdrawalService gigWithdrawalService(List<GigWithdrawer> withdrawers, PublishedGigStore publishedGigStore) {
         return new GigWithdrawalService(withdrawers, publishedGigStore);
+    }
+
+    @Bean
+    GigResyncService gigResyncService(List<GigPublisher> publishers, List<GigUpdater> updaters,
+                                      List<GigWithdrawer> withdrawers, PublishedGigStore publishedGigStore) {
+        return new GigResyncService(publishers, updaters, withdrawers, publishedGigStore);
     }
 }

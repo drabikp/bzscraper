@@ -1,8 +1,8 @@
 package sk.drabikp.bzscraper.application.port.in;
 
 import sk.drabikp.bzscraper.domain.model.GigId;
+import sk.drabikp.bzscraper.domain.model.PlatformResult;
 import sk.drabikp.bzscraper.domain.model.WithdrawAction;
-import sk.drabikp.bzscraper.domain.model.WithdrawResult;
 
 import java.util.List;
 
@@ -13,5 +13,5 @@ import java.util.List;
  */
 public interface WithdrawGigsUseCase {
 
-    List<WithdrawResult> withdraw(GigId gigId, WithdrawAction action);
+    List<PlatformResult> withdraw(GigId gigId, WithdrawAction action);
 }

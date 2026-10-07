@@ -13,19 +13,27 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
- * Live integration test — drives real Bandzone with a real browser and CREATES a
- * gig on the configured band. Skipped unless {@code BZ_LIVE=true}. Reads creds from
- * env so nothing is committed:
+ * Live integration test — drives real Bandzone with a real browser: CREATES a gig on
+ * the configured band with every field Bandzone has (end, club venue, poster, paid entry,
+ * lineup with a profile band and a profile-less one), EDITS it (free-text venue, other
+ * city, a performer removed), then DELETES it (cleanup runs even when a step fails).
+ * Skipped unless {@code BZ_LIVE=true}. Reads creds from env so nothing is committed:
  *   BZ_LOGIN, BZ_PASSWORD, BZ_SLUG  (required)
+ *   BZ_LINEUP_BAND  a Bandzone band that may be notified (default: none, lineup keeps stubs only)
+ *   BZ_KEEP=true    keep the gig for manual inspection (prints its id)
  *   BZ_CHROMIUM (default /usr/bin/chromium), BZ_CHROMEDRIVER (default /usr/bin/chromedriver)
  *
- * The created gig is left on the band — delete it manually afterwards.
+ * Use a test band — the gig is briefly public, and BZ_LINEUP_BAND gets notified.
  */
 @EnabledIfEnvironmentVariable(named = "BZ_LIVE", matches = "true")
 class SeleniumBandzonePortalClientLiveTest {
+
+    private static final ZoneId PRAGUE = ZoneId.of("Europe/Prague");
+    private static final String STUB = "Bzscraper Testovaci Interpret";
 
     private static String env(String name, String fallback) {
         String v = System.getenv(name);
@@ -33,7 +41,7 @@ class SeleniumBandzonePortalClientLiveTest {
     }
 
     @Test
-    void creates_a_gig_on_the_real_band_without_error() {
+    void creates_edits_and_deletes_a_gig_with_every_field() {
         SeleniumBandzonePortalClient client = new SeleniumBandzonePortalClient(
                 env("BZ_BASE_URL", "https://bandzone.cz"),
                 env("BZ_LOGIN", ""),
@@ -42,15 +50,37 @@ class SeleniumBandzonePortalClientLiveTest {
                 Boolean.parseBoolean(env("BZ_HEADLESS", "true")),
                 env("BZ_CHROMIUM", "/usr/bin/chromium"),
                 env("BZ_CHROMEDRIVER", "/usr/bin/chromedriver"));
+        String lineupBand = env("BZ_LINEUP_BAND", "");
+        boolean keep = Boolean.parseBoolean(env("BZ_KEEP", "false"));
 
-        Gig gig = Gig.create("TEST selenium client (smazat)",
-                GigSchedule.startingAt(ZonedDateTime.of(2026, 11, 12, 20, 0, 0, 0, ZoneId.of("Europe/Prague"))),
-                new Location("Klub 007", "Praha", Country.CZECHIA), List.of(), Admission.free(),
-                null, null, null, null);
+        List<String> fullLineup = lineupBand.isBlank() ? List.of(STUB) : List.of(lineupBand, STUB);
+        List<String> editedLineup = lineupBand.isBlank() ? List.of() : List.of(lineupBand);
+
+        Gig gig = new Gig("TEST selenium client (smazat)",
+                new GigSchedule(ZonedDateTime.of(2026, 11, 12, 20, 0, 0, 0, PRAGUE),
+                        ZonedDateTime.of(2026, 11, 13, 1, 0, 0, 0, PRAGUE)),
+                new Location("Lucerna Music Bar", "Praha", Country.CZECHIA), fullLineup,
+                Admission.paid("200 Kč"), "created by the live test", "https://www.facebook.com/events/1",
+                null, "https://bandzone.cz/img/default/band-single-small.png", false);
+        Gig edited = new Gig("TEST selenium client edited (smazat)",
+                GigSchedule.startingAt(ZonedDateTime.of(2026, 11, 14, 21, 30, 0, 0, PRAGUE)),
+                new Location("Garáž u Nováků", "Brno", Country.CZECHIA), editedLineup,
+                Admission.voluntary(), "edited by the live test", null, null, null, false);
 
         assertThatCode(() -> {
             try (BandzoneSession session = client.openSession()) {
-                session.createGig(gig);
+                String id = session.createGig(gig);
+                assertThat(id).matches("\\d+");
+                try {
+                    session.updateGig(id, gig);    // what publishing does after the wizard
+                    session.updateGig(id, edited); // each throws if Bandzone did not store it
+                } finally {
+                    if (keep) {
+                        System.out.println("BZ_KEEP: kept concert " + id);
+                    } else {
+                        session.deleteGig(id);
+                    }
+                }
             }
         }).doesNotThrowAnyException();
     }

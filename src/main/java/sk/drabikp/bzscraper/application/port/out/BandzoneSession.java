@@ -18,6 +18,13 @@ public interface BandzoneSession extends AutoCloseable {
      */
     String createGig(Gig gig) throws BandzoneUploadException;
 
+    /**
+     * Overwrites an existing concert's details (title, start, city, admission,
+     * description, Facebook link) in place; its Bandzone id does not change. Does not
+     * touch the cancelled state — Bandzone has no way to un-cancel a concert.
+     */
+    void updateGig(String bandzoneId, Gig gig) throws BandzoneUploadException;
+
     /** Marks the concert cancelled on Bandzone (it stays listed as cancelled). */
     void cancelGig(String bandzoneId) throws BandzoneUploadException;
 

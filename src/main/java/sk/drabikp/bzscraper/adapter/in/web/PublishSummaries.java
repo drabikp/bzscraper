@@ -25,7 +25,8 @@ final class PublishSummaries {
                 .map(p -> platformLine(p, byPlatform.get(p)))
                 .collect(Collectors.joining("   ·   "));
 
-        boolean anyFailed = results.stream().anyMatch(r -> r.status() == PublishStatus.FAILED);
+        boolean anyFailed = results.stream().anyMatch(r -> r.status() == PublishStatus.FAILED
+                || (r.status() == PublishStatus.PUBLISHED && r.detail() != null));
         Notification.show(msg, 6000,
                 anyFailed ? Notification.Position.MIDDLE : Notification.Position.BOTTOM_START);
     }
@@ -38,6 +39,12 @@ final class PublishSummaries {
 
         StringBuilder sb = new StringBuilder(label(platform)).append(": ")
                 .append(published).append(" published");
+        results.stream()
+                .filter(r -> r.status() == PublishStatus.PUBLISHED)
+                .map(PublishResult::detail)
+                .filter(d -> d != null && !d.isBlank())
+                .findFirst()
+                .ifPresent(note -> sb.append(" (").append(note).append(")"));
         if (already > 0) {
             sb.append(", ").append(already).append(" already up");
         }

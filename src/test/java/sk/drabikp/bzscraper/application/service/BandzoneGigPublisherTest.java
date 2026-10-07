@@ -74,4 +74,37 @@ class BandzoneGigPublisherTest {
                 .containsExactly(PublishStatus.FAILED, PublishStatus.FAILED);
         assertThat(results).allSatisfy(r -> assertThat(r.detail()).isEqualTo("login failed"));
     }
+
+    @Test
+    void each_created_gig_is_completed_through_the_edit_form() throws Exception {
+        when(portalClient.openSession()).thenReturn(session);
+        Gig a = gig("A", "Klub 007");
+        when(session.createGig(a)).thenReturn("561859");
+
+        List<PublishResult> results = publisher.publishNew(List.of(a));
+
+        verify(session).updateGig("561859", a);
+        assertThat(results).singleElement().satisfies(r -> {
+            assertThat(r.status()).isEqualTo(PublishStatus.PUBLISHED);
+            assertThat(r.externalRef()).isEqualTo("561859");
+            assertThat(r.detail()).isNull();
+        });
+    }
+
+    @Test
+    void a_gig_created_but_not_completed_is_still_published_so_it_is_not_posted_twice() throws Exception {
+        when(portalClient.openSession()).thenReturn(session);
+        Gig a = gig("A", "Klub 007");
+        when(session.createGig(a)).thenReturn("561859");
+        doThrow(new BandzoneUploadException("poster upload did not finish"))
+                .when(session).updateGig("561859", a);
+
+        List<PublishResult> results = publisher.publishNew(List.of(a));
+
+        assertThat(results).singleElement().satisfies(r -> {
+            assertThat(r.status()).isEqualTo(PublishStatus.PUBLISHED);
+            assertThat(r.externalRef()).isEqualTo("561859");
+            assertThat(r.detail()).contains("poster upload did not finish");
+        });
+    }
 }

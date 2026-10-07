@@ -2,6 +2,7 @@ package sk.drabikp.bzscraper.adapter.out.bandzone;
 
 import org.openqa.selenium.By;
 import org.openqa.selenium.JavascriptExecutor;
+import org.openqa.selenium.TimeoutException;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.chrome.ChromeDriver;
@@ -21,13 +22,27 @@ import sk.drabikp.bzscraper.domain.model.EntryType;
 import sk.drabikp.bzscraper.domain.model.Gig;
 
 import java.io.File;
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Real Bandzone publisher: opens ONE headless-browser session per batch (single
- * login) and creates each gig through the band-admin 3-step wizard. Active only
+ * login) and creates each gig through the band-admin 2-step wizard, edits it through
+ * the concert's update form (details, venue, poster) and performing-bands tab (lineup),
+ * and cancels/deletes it through the update delete tab. Active only
  * when {@code bzscraper.bandzone.selenium.enabled=true} (otherwise the stub is
  * used, so the app boots without a browser). Credentials come from config.
  *
@@ -136,11 +151,18 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
 
         private static final DateTimeFormatter BZ_DATE = DateTimeFormatter.ofPattern("d.M.yyyy");
         private static final DateTimeFormatter BZ_TIME = DateTimeFormatter.ofPattern("HH:mm");
+        /** After the wizard's last step Bandzone redirects to {@code /koncert/<id>-<slug>}. */
+        private static final Pattern CONCERT_URL = Pattern.compile("/koncert/(\\d+)");
+
+        private static final Duration SUGGESTION_WAIT = Duration.ofSeconds(5);
+        private static final Duration UPLOAD_WAIT = Duration.ofSeconds(60);
+        private static final Duration RELOAD_WAIT = Duration.ofSeconds(5);
 
         private final WebDriver driver;
         private final WebDriverWait wait;
         private final String baseUrl;
         private final String bandSlug;
+        private String ownBandName; // read once per session from the band's profile
 
         SeleniumBandzoneSession(WebDriver driver, WebDriverWait wait, String baseUrl, String bandSlug) {
             this.driver = driver;
@@ -155,14 +177,85 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
                 openWizard();
                 fillDateAndCity(gig);
                 passDuplicateScreen();
-                fillInfoAndSend(gig);
-                return verifyCreatedAndGetId(gig);
+                fillInfo(gig);
+                return sendAndGetCreatedId(gig);
             } catch (BandzoneUploadException e) {
                 throw e;
             } catch (RuntimeException e) {
                 // Fail only this gig; the session stays open for the rest of the batch.
                 throw new BandzoneUploadException("Bandzone create failed for '" + gig.title()
                         + "': " + e.getMessage(), e);
+            }
+        }
+
+        @Override
+        public void updateGig(String bandzoneId, Gig gig) throws BandzoneUploadException {
+            String updateUrl = baseUrl + "/koncert/" + bandzoneId + "/update?updateTabs-at=updateForm";
+            try {
+                driver.get(updateUrl);
+                wait.until(ExpectedConditions.presenceOfElementLocated(By.id("frmupdateForm-send")));
+                // the upload re-renders the form, so it goes before the fields are set
+                if (gig.posterImageUrl() != null) {
+                    uploadPoster(gig.posterImageUrl());
+                }
+                // Autocomplete picks reload the form via AJAX, so they go before the plain
+                // fields; the venue search only offers clubs of the selected city.
+                selectCity(gig.location().city());
+                selectVenue(gig.location().venue());
+                // the update form uses the same field names as the create wizard
+                setValue(driver, "[name='start[date]']", gig.schedule().start().format(BZ_DATE));
+                setValue(driver, "[name='start[time]']", gig.schedule().start().format(BZ_TIME));
+                setValue(driver, "[name='end[date]']", gig.schedule().hasEnd() ? gig.schedule().end().format(BZ_DATE) : "");
+                setValue(driver, "[name='end[time]']", gig.schedule().hasEnd() ? gig.schedule().end().format(BZ_TIME) : "");
+                fillInfo(gig);
+
+                WebElement send = driver.findElement(By.id("frmupdateForm-send"));
+                jsClick(driver, send);
+                wait.until(ExpectedConditions.stalenessOf(send));
+                verifyStored(updateUrl, bandzoneId, gig);
+
+                new BandzoneLineupPage(driver, wait, baseUrl, bandzoneId).sync(gig.lineup(), ownBandName());
+                logger.info("Bandzone gig updated: '{}' (id {})", gig.title(), bandzoneId);
+            } catch (BandzoneUploadException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                throw new BandzoneUploadException("Bandzone update failed for concert " + bandzoneId
+                        + ": " + e.getMessage(), e);
+            }
+        }
+
+        /**
+         * A rejected form re-renders with the submitted values, so re-read the stored
+         * concert and compare the fields that identify the gig.
+         */
+        private void verifyStored(String updateUrl, String bandzoneId, Gig gig) throws BandzoneUploadException {
+            driver.get(updateUrl);
+            wait.until(ExpectedConditions.presenceOfElementLocated(By.id("frmupdateForm-send")));
+            Map<String, String> expected = new LinkedHashMap<>();
+            expected.put("name", gig.title());
+            expected.put("start[date]", gig.schedule().start().format(BZ_DATE));
+            expected.put("start[time]", gig.schedule().start().format(BZ_TIME));
+            expected.put("end[date]", gig.schedule().hasEnd() ? gig.schedule().end().format(BZ_DATE) : "");
+            expected.put("cityId__container[textInput]", gig.location().city());
+            expected.put("venueId__container[textInput]", gig.location().venue() == null ? "" : gig.location().venue());
+            expected.put("entry", gig.admission().isPaid() ? gig.admission().amount() : "");
+            expected.put("info", gig.description() == null ? "" : gig.description());
+            List<String> mismatched = new ArrayList<>();
+            expected.forEach((field, value) -> {
+                String stored = driver.findElement(By.name(field)).getAttribute("value");
+                if (!value.equalsIgnoreCase(stored == null ? "" : stored.trim())) {
+                    mismatched.add(field + "='" + stored + "' (expected '" + value + "')");
+                }
+            });
+            String storedType = (String) ((JavascriptExecutor) driver).executeScript(
+                    "var r=document.querySelector('[name=entryType]:checked');return r?r.value:'';");
+            if (!entryTypeValue(gig.admission().type()).equals(storedType)) {
+                mismatched.add("entryType='" + storedType + "' (expected '"
+                        + entryTypeValue(gig.admission().type()) + "')");
+            }
+            if (!mismatched.isEmpty()) {
+                throw new BandzoneUploadException("Bandzone did not save the changes to concert "
+                        + bandzoneId + ": " + String.join(", ", mismatched));
             }
         }
 
@@ -209,22 +302,184 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
         private void fillDateAndCity(Gig gig) {
             setValue(driver, "[name='start[date]']", gig.schedule().start().format(BZ_DATE));
             setValue(driver, "[name='start[time]']", gig.schedule().start().format(BZ_TIME));
+            selectCity(gig.location().city());
+            jsClickByName(driver, "continue");
+        }
 
-            String city = gig.location().city();
+        /**
+         * Picks the city through the JS autocomplete. Skipped when the form already holds
+         * it (editing a gig in the same city); otherwise waits for {@code cityId} to take
+         * the newly picked value.
+         */
+        private void selectCity(String city) {
+            String currentText = driver.findElement(By.name("cityId__container[textInput]")).getAttribute("value");
+            String previousId = driver.findElement(By.name("cityId")).getAttribute("value");
+            if (city.equalsIgnoreCase(currentText) && previousId != null && !previousId.isBlank()) {
+                return;
+            }
             setValue(driver, "[name='cityId__container[textInput]']", city);
             jsClickByName(driver, "cityId__container[searchButton]");
 
             WebElement suggestion = wait.until(ExpectedConditions.presenceOfElementLocated(By.xpath(
                     "//li[starts-with(normalize-space(.), '" + city + "')]")));
+            WebElement cityIdInput = driver.findElement(By.name("cityId"));
             jsClick(driver, suggestion);
+            awaitFormReload(cityIdInput);
 
             wait.until(d -> {
                 String v = d.findElement(By.name("cityId")).getAttribute("value");
-                return v != null && !v.isBlank();
+                return v != null && !v.isBlank() && !v.equals(previousId);
             });
-            jsClickByName(driver, "continue");
         }
 
+        /**
+         * Sets the venue. An exact (case-insensitive) match in Bandzone's club database
+         * links the club; anything else is kept as free text, which Bandzone accepts.
+         * A gig without a venue clears it.
+         */
+        private void selectVenue(String venue) {
+            String currentText = driver.findElement(By.name("venueId__container[textInput]")).getAttribute("value");
+            if (venue != null && venue.equalsIgnoreCase(currentText)) {
+                return;
+            }
+            setValue(driver, "[name='venueId']", "");
+            if (venue == null) {
+                setValue(driver, "[name='venueId__container[textInput]']", "");
+                return;
+            }
+            ((JavascriptExecutor) driver).executeScript(
+                    "document.querySelectorAll('ul.ui-autocomplete').forEach(u=>{u.innerHTML='';u.style.display='none';});"
+                            + "var t=document.querySelector('[name=\"venueId__container[textInput]\"]');"
+                            + "t.focus();t.value=arguments[0];t.dispatchEvent(new Event('input',{bubbles:true}));",
+                    venue);
+            try {
+                new WebDriverWait(driver, SUGGESTION_WAIT).until(d -> (Boolean) ((JavascriptExecutor) d).executeScript(
+                        "return Array.from(document.querySelectorAll('ul.ui-autocomplete'))"
+                                + ".some(u=>u.offsetParent!==null&&u.querySelector('li'));"));
+            } catch (TimeoutException e) {
+                keepFreeTextVenue(venue); // no club suggestions
+                return;
+            }
+            WebElement venueIdInput = driver.findElement(By.name("venueId"));
+            Boolean linked = (Boolean) ((JavascriptExecutor) driver).executeScript(
+                    "var n=arguments[0].toLowerCase();"
+                            + "var m=Array.from(document.querySelectorAll('ul.ui-autocomplete li'))"
+                            + ".filter(l=>l.offsetParent!==null)"
+                            + ".find(l=>{var h=l.querySelector('h4.title');return h&&h.innerText.trim().toLowerCase()===n;});"
+                            + "if(m){(m.querySelector('a')||m).click();return true;} return false;",
+                    venue);
+            if (Boolean.TRUE.equals(linked)) {
+                awaitFormReload(venueIdInput);
+                wait.until(d -> {
+                    String v = d.findElement(By.name("venueId")).getAttribute("value");
+                    return v != null && !v.isBlank();
+                });
+            } else {
+                keepFreeTextVenue(venue);
+            }
+        }
+
+        /**
+         * Picking from a city/venue autocomplete re-renders the update form via AJAX
+         * about a second later, re-posting its current values; anything typed before
+         * that lands is lost. Waits for the old form to go (the create wizard does not
+         * reload, so a timeout just means there was nothing to wait for).
+         */
+        private void awaitFormReload(WebElement oldFormElement) {
+            try {
+                new WebDriverWait(driver, RELOAD_WAIT).until(ExpectedConditions.stalenessOf(oldFormElement));
+            } catch (TimeoutException e) {
+                // no reload
+            }
+        }
+
+        /**
+         * Closing the club menu without a pick makes the widget restore the previously
+         * linked club's name, so the free text is written again — without events — and
+         * the club link cleared.
+         */
+        private void keepFreeTextVenue(String venue) {
+            ((JavascriptExecutor) driver).executeScript(
+                    "document.querySelectorAll('ul.ui-autocomplete').forEach(u=>u.style.display='none');"
+                            + "var t=document.querySelector('[name=\"venueId__container[textInput]\"]');"
+                            + "t.blur();t.value=arguments[0];"
+                            + "document.querySelector('[name=\"venueId\"]').value='';",
+                    venue);
+        }
+
+        /**
+         * Downloads the poster and uploads it through the form's auto-uploading file
+         * input (Bandzone keeps one image; a new upload replaces it). Bandzone offers no
+         * way to remove a poster, so a gig without one leaves the current image alone.
+         */
+        private void uploadPoster(String posterUrl) throws BandzoneUploadException {
+            Path file = downloadPoster(posterUrl);
+            try {
+                By input = By.name("profileImage[uploader]");
+                wait.until(d -> d.findElement(input).isEnabled()); // enabled once the uploader's JS is ready
+                WebElement formBefore = driver.findElement(By.id("frmupdateForm-send"));
+                driver.findElement(input).sendKeys(file.toAbsolutePath().toString());
+                new WebDriverWait(driver, UPLOAD_WAIT).until(d -> (Boolean) ((JavascriptExecutor) d).executeScript(
+                        "var c=document.querySelector('[id^=files-container]');"
+                                + "return !!c && /Nahráno/.test(c.innerText) && !c.querySelector('.template-upload');"));
+                awaitFormReload(formBefore); // the uploader reloads the form when done
+                wait.until(ExpectedConditions.presenceOfElementLocated(By.id("frmupdateForm-send")));
+            } catch (TimeoutException e) {
+                throw new BandzoneUploadException("Poster upload did not finish: " + posterUrl, e);
+            } finally {
+                try {
+                    Files.deleteIfExists(file);
+                } catch (IOException ignored) {
+                    // temp file; the OS cleans it up eventually
+                }
+            }
+        }
+
+        private static Path downloadPoster(String posterUrl) throws BandzoneUploadException {
+            try {
+                String path = URI.create(posterUrl).getPath();
+                String ext = path != null && path.matches(".*\\.(?i)(jpe?g|png|gif|webp)$")
+                        ? path.substring(path.lastIndexOf('.')) : ".jpg";
+                Path file = Files.createTempFile("bz-poster-", ext);
+                HttpResponse<Path> response = HttpClient.newBuilder()
+                        .followRedirects(HttpClient.Redirect.NORMAL).build()
+                        .send(HttpRequest.newBuilder(URI.create(posterUrl)).GET().build(),
+                                HttpResponse.BodyHandlers.ofFile(file));
+                if (response.statusCode() != 200) {
+                    Files.deleteIfExists(file);
+                    throw new BandzoneUploadException("Poster download failed (HTTP "
+                            + response.statusCode() + "): " + posterUrl);
+                }
+                return file;
+            } catch (IOException | IllegalArgumentException e) {
+                throw new BandzoneUploadException("Poster download failed: " + posterUrl, e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new BandzoneUploadException("Poster download interrupted: " + posterUrl, e);
+            }
+        }
+
+        /**
+         * The publishing band's display name, as it appears in a concert's performer list.
+         * Read from {@code og:title}: the profile's {@code <h1>} also holds genre and city.
+         */
+        private String ownBandName() throws BandzoneUploadException {
+            if (ownBandName == null) {
+                driver.get(baseUrl + "/" + bandSlug);
+                String name = wait.until(ExpectedConditions.presenceOfElementLocated(
+                        By.cssSelector("meta[property='og:title']"))).getAttribute("content");
+                if (name == null || name.isBlank()) {
+                    throw new BandzoneUploadException("Could not read the band name of '" + bandSlug + "'.");
+                }
+                ownBandName = name.trim();
+            }
+            return ownBandName;
+        }
+
+        /**
+         * Between the wizard's two steps Bandzone may list similar concerts (same date and
+         * city) and ask whether this is one of them; "new" continues to the info step.
+         */
         private void passDuplicateScreen() {
             wait.until(ExpectedConditions.or(
                     ExpectedConditions.presenceOfElementLocated(By.name("new")),
@@ -235,23 +490,26 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
             }
         }
 
-        private void fillInfoAndSend(Gig gig) {
+        /** Sets every info field, blanking the optional ones the gig does not have (for edits). */
+        private void fillInfo(Gig gig) {
             setValue(driver, "[name='name']", gig.title());
             selectEntryType(gig.admission().type());
-            if (gig.admission().isPaid()) {
-                setValue(driver, "[name='entry']", gig.admission().amount());
-            }
-            if (gig.description() != null && !gig.description().isBlank()) {
-                setValue(driver, "[name='info']", gig.description());
-            }
-            if (gig.facebookUrl() != null && !gig.facebookUrl().isBlank()) {
-                setValue(driver, "[name='facebookUrl']", gig.facebookUrl());
-            }
-            WebElement send = driver.findElement(By.name("send"));
-            jsClick(driver, send);
-            wait.until(ExpectedConditions.or(
-                    ExpectedConditions.stalenessOf(send),
-                    ExpectedConditions.urlContains("bandzone.cz")));
+            setValue(driver, "[name='entry']", gig.admission().isPaid() ? gig.admission().amount() : "");
+            setValue(driver, "[name='info']", orEmpty(gig.description()));
+            setValue(driver, "[name='facebookUrl']", orEmpty(gig.facebookUrl()));
+        }
+
+        private static String orEmpty(String value) {
+            return value == null ? "" : value;
+        }
+
+        /** The {@code entryType} radio value Bandzone stores (0 = paid, 1 = voluntary, 2 = free). */
+        private static String entryTypeValue(EntryType entryType) {
+            return switch (entryType == null ? EntryType.FREE : entryType) {
+                case PAID -> "0";
+                case VOLUNTARY -> "1";
+                case FREE -> "2";
+            };
         }
 
         private void selectEntryType(EntryType entryType) {
@@ -268,29 +526,28 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
                     term);
         }
 
-        private String verifyCreatedAndGetId(Gig gig) throws BandzoneUploadException {
-            int year = gig.schedule().start().getYear();
-            driver.get(baseUrl + "/" + bandSlug + "?at=gig&gy=" + year);
-            String title = gig.title();
-            // Find the created gig's link and pull its numeric concert id from the href.
-            String id = (String) ((JavascriptExecutor) driver).executeScript(
-                    "var t=arguments[0].toLowerCase();"
-                            + "var a=Array.from(document.querySelectorAll('a[href*=\"/koncert/\"]'))"
-                            + ".find(x=>(x.innerText||'').trim().toLowerCase().includes(t));"
-                            + "if(!a) return null;"
-                            + "var m=(a.getAttribute('href')||'').match(/\\/koncert\\/(\\d+)/);"
-                            + "return m?m[1]:null;",
-                    title);
-            if (id == null) {
-                throw new BandzoneUploadException("Gig '" + title + "' was submitted but did not appear "
-                        + "on the band's gig list.");
+        /**
+         * Submits the wizard and reads the new concert id from the page Bandzone redirects
+         * to. (Searching the band page by title is unreliable: same-titled gigs and the
+         * notification panel link to other concerts.)
+         */
+        private String sendAndGetCreatedId(Gig gig) throws BandzoneUploadException {
+            jsClick(driver, driver.findElement(By.name("send")));
+            try {
+                wait.until(d -> CONCERT_URL.matcher(d.getCurrentUrl()).find());
+            } catch (RuntimeException e) {
+                throw new BandzoneUploadException("Gig '" + gig.title() + "' was submitted but Bandzone "
+                        + "did not open the created concert (still at " + driver.getCurrentUrl() + ").", e);
             }
-            logger.info("Bandzone gig created: '{}' (id {})", title, id);
+            Matcher m = CONCERT_URL.matcher(driver.getCurrentUrl());
+            m.find();
+            String id = m.group(1);
+            logger.info("Bandzone gig created: '{}' (id {})", gig.title(), id);
             return id;
         }
     }
 
-    private static void setValue(WebDriver driver, String cssSelector, String value) {
+    static void setValue(WebDriver driver, String cssSelector, String value) {
         ((JavascriptExecutor) driver).executeScript(
                 "var e=document.querySelector(arguments[0]);"
                         + "if(e){e.value=arguments[1];"
@@ -299,7 +556,7 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
                 cssSelector, value);
     }
 
-    private static void jsClickByName(WebDriver driver, String name) {
+    static void jsClickByName(WebDriver driver, String name) {
         ((JavascriptExecutor) driver).executeScript(
                 "var e=document.querySelector(arguments[0]); if(e){e.click();}",
                 "[name='" + name + "']");

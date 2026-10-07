@@ -6,8 +6,8 @@ import sk.drabikp.bzscraper.application.port.out.GigWithdrawer;
 import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.Platform;
+import sk.drabikp.bzscraper.domain.model.PlatformResult;
 import sk.drabikp.bzscraper.domain.model.WithdrawAction;
-import sk.drabikp.bzscraper.domain.model.WithdrawResult;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -39,8 +39,8 @@ public class GigWithdrawalService implements WithdrawGigsUseCase {
     }
 
     @Override
-    public List<WithdrawResult> withdraw(GigId gigId, WithdrawAction action) {
-        List<WithdrawResult> results = new ArrayList<>();
+    public List<PlatformResult> withdraw(GigId gigId, WithdrawAction action) {
+        List<PlatformResult> results = new ArrayList<>();
         for (Map.Entry<Platform, GigWithdrawer> entry : withdrawers.entrySet()) {
             Platform platform = entry.getKey();
             Optional<String> externalRef = publishedGigStore.externalRef(platform, gigId);
@@ -52,9 +52,9 @@ public class GigWithdrawalService implements WithdrawGigsUseCase {
                 if (action == WithdrawAction.DELETE) {
                     publishedGigStore.remove(platform, gigId);
                 }
-                results.add(WithdrawResult.ok(platform));
+                results.add(PlatformResult.ok(platform));
             } catch (GigWithdrawalException e) {
-                results.add(WithdrawResult.failed(platform, e.getMessage()));
+                results.add(PlatformResult.failed(platform, e.getMessage()));
             }
         }
         return results;
