@@ -6,6 +6,8 @@ import sk.drabikp.bzscraper.application.port.in.ListGigsUseCase;
 import sk.drabikp.bzscraper.application.port.in.SaveGigUseCase;
 import sk.drabikp.bzscraper.application.port.in.UpdateGigUseCase;
 import sk.drabikp.bzscraper.application.port.out.GigRepository;
+import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
+import sk.drabikp.bzscraper.application.port.out.Transactions;
 import sk.drabikp.bzscraper.domain.model.DateRange;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.GigId;
@@ -16,15 +18,21 @@ import java.util.List;
  * Manages the local gig catalog (the source of truth) over the {@link GigRepository}.
  * Thin application service — invariants live in the {@link Gig} aggregate, persistence
  * behind the repository port. Cancel/reactivate and edit are lifecycle operations on
- * a stored gig.
+ * a stored gig. An edit that changes the gig's identity also re-keys its published
+ * records, in the same transaction, so they never point at a gig that no longer exists.
  */
 public class GigCatalogService
         implements SaveGigUseCase, ListGigsUseCase, DeleteGigUseCase, UpdateGigUseCase, CancelGigUseCase {
 
     private final GigRepository gigRepository;
+    private final PublishedGigStore publishedGigStore;
+    private final Transactions transactions;
 
-    public GigCatalogService(GigRepository gigRepository) {
+    public GigCatalogService(GigRepository gigRepository, PublishedGigStore publishedGigStore,
+                             Transactions transactions) {
         this.gigRepository = gigRepository;
+        this.publishedGigStore = publishedGigStore;
+        this.transactions = transactions;
     }
 
     @Override
@@ -49,11 +57,15 @@ public class GigCatalogService
 
     @Override
     public void update(GigId originalId, Gig updated) {
-        // If the edit moved the gig's identity (date/venue changed), drop the old row.
-        if (!updated.id().equals(originalId)) {
-            gigRepository.deleteById(originalId);
-        }
-        gigRepository.save(updated);
+        transactions.inTransaction(() -> {
+            // If the edit moved the gig's identity (date/venue changed), drop the old row
+            // and let the published records follow the gig.
+            if (!updated.id().equals(originalId)) {
+                gigRepository.deleteById(originalId);
+                publishedGigStore.move(originalId, updated.id());
+            }
+            gigRepository.save(updated);
+        });
     }
 
     @Override

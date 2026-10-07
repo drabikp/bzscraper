@@ -62,36 +62,35 @@ class GigResyncServiceTest {
     @Test
     void an_edit_updates_the_platform_copy_in_place() throws Exception {
         Gig renamed = TestGigs.gig("A renamed", "Klub 007");
-        publishedOnBandzone(originalId, "100");
+        publishedOnBandzone(renamed.id(), "100");
 
-        List<PlatformResult> results = service().pushEdit(originalId, renamed);
+        List<PlatformResult> results = service().pushEdit(renamed);
 
         verify(bzUpdater).update("100", renamed);
         verify(bzWithdrawer, never()).withdraw(any(), any());
         verify(bzPublisher, never()).publishNew(anyList());
-        verify(store, never()).remove(any(), any()); // same identity, same ref: nothing to move
+        verify(store, never()).remove(any(), any());
+        verify(store, never()).record(any(), any(), any());
         assertThat(results).singleElement().satisfies(r -> assertThat(r.succeeded()).isTrue());
     }
 
     @Test
-    void an_edit_that_changes_identity_moves_the_record_and_keeps_the_ref() throws Exception {
-        publishedOnBandzone(originalId, "100");
+    void an_edit_is_pushed_under_the_gigs_current_identity() throws Exception {
+        // the catalog update has already moved the record to the new date
+        publishedOnBandzone(movedToNewDate.id(), "100");
 
-        service().pushEdit(originalId, movedToNewDate);
+        service().pushEdit(movedToNewDate);
 
-        verify(store).remove(Platform.BANDZONE, originalId);
-        verify(store).record(Platform.BANDZONE, movedToNewDate.id(), "100");
         verify(bzUpdater).update("100", movedToNewDate);
     }
 
     @Test
-    void a_failed_update_is_reported_but_the_record_still_follows_the_gig() throws Exception {
+    void a_failed_update_is_reported() throws Exception {
         publishedOnBandzone(originalId, "100");
         doThrow(new GigUpdateException("form rejected")).when(bzUpdater).update(any(), any());
 
-        List<PlatformResult> results = service().pushEdit(originalId, movedToNewDate);
+        List<PlatformResult> results = service().pushEdit(original);
 
-        verify(store).record(Platform.BANDZONE, movedToNewDate.id(), "100");
         assertThat(results).singleElement().satisfies(r -> {
             assertThat(r.succeeded()).isFalse();
             assertThat(r.detail()).isEqualTo("form rejected");
@@ -99,13 +98,12 @@ class GigResyncServiceTest {
     }
 
     @Test
-    void an_edit_without_a_captured_ref_moves_the_record_and_reports_not_updated() throws Exception {
+    void an_edit_without_a_captured_ref_is_reported_not_updated() throws Exception {
         publishedOnBandzone(originalId, null);
 
-        List<PlatformResult> results = service().pushEdit(originalId, movedToNewDate);
+        List<PlatformResult> results = service().pushEdit(original);
 
         verify(bzUpdater, never()).update(any(), any());
-        verify(store).record(Platform.BANDZONE, movedToNewDate.id(), null);
         assertThat(results).singleElement().satisfies(r -> assertThat(r.succeeded()).isFalse());
     }
 
@@ -114,7 +112,7 @@ class GigResyncServiceTest {
         when(store.isPublished(Platform.BANDSINTOWN, originalId)).thenReturn(true);
         when(store.externalRef(Platform.BANDSINTOWN, originalId)).thenReturn(Optional.empty());
 
-        List<PlatformResult> results = service().pushEdit(originalId, original);
+        List<PlatformResult> results = service().pushEdit(original);
 
         assertThat(results).singleElement().satisfies(r -> {
             assertThat(r.platform()).isEqualTo(Platform.BANDSINTOWN);
@@ -124,7 +122,7 @@ class GigResyncServiceTest {
 
     @Test
     void platforms_where_the_gig_was_never_published_are_skipped() throws Exception {
-        assertThat(service().pushEdit(originalId, movedToNewDate)).isEmpty();
+        assertThat(service().pushEdit(movedToNewDate)).isEmpty();
         assertThat(service().reactivate(original)).isEmpty();
         verify(bzUpdater, never()).update(any(), any());
         verify(bzPublisher, never()).publishNew(anyList());

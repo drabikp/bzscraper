@@ -12,6 +12,7 @@ import sk.drabikp.bzscraper.application.port.out.GigRepository;
 import sk.drabikp.bzscraper.application.port.out.GigUpdater;
 import sk.drabikp.bzscraper.application.port.out.GigWithdrawer;
 import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
+import sk.drabikp.bzscraper.application.port.out.Transactions;
 import sk.drabikp.bzscraper.application.service.BandsintownGigPublisher;
 import sk.drabikp.bzscraper.application.service.BandzoneGigPublisher;
 import sk.drabikp.bzscraper.application.service.GigCatalogService;
@@ -53,8 +54,9 @@ public class UseCaseConfiguration {
     }
 
     @Bean
-    GigCatalogService gigCatalogService(GigRepository gigRepository) {
-        return new GigCatalogService(gigRepository);
+    GigCatalogService gigCatalogService(GigRepository gigRepository, PublishedGigStore publishedGigStore,
+                                        Transactions transactions) {
+        return new GigCatalogService(gigRepository, publishedGigStore, transactions);
     }
 
     @Bean

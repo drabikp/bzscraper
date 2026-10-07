@@ -23,4 +23,10 @@ public interface PublishedGigStore {
 
     /** Forgets a gig on a platform (after it has been removed there). */
     void remove(Platform platform, GigId gigId);
+
+    /**
+     * Re-keys every platform's record of a gig whose identity changed (an edit moved its
+     * date or venue), keeping the external ids. No-op if nothing was recorded under {@code from}.
+     */
+    void move(GigId from, GigId to);
 }

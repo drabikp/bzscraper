@@ -25,9 +25,8 @@ import java.util.Optional;
  * Keeps platform copies of a published gig in step with the catalog.
  *
  * <p><b>Edit</b> — the platform's {@link GigUpdater} overwrites its copy in place, so the
- * external id stays. The published record always follows the gig to its current id
- * (the edit may change date/venue), so a later Publish never double-posts it — even when
- * the platform could not be updated and keeps the old version.
+ * external id stays. The published records already follow the gig to its current id:
+ * the catalog update moves them when an edit changes the date or venue.
  *
  * <p><b>Reactivate</b> — platforms cannot un-cancel (Bandzone has no such action), so the
  * cancelled copy is <em>deleted, then re-created</em> with the {@link GigWithdrawer} and
@@ -49,12 +48,10 @@ public class GigResyncService implements ResyncGigUseCase {
     }
 
     @Override
-    public List<PlatformResult> pushEdit(GigId previousId, Gig current) {
+    public List<PlatformResult> pushEdit(Gig gig) {
         List<PlatformResult> results = new ArrayList<>();
-        for (Platform platform : publishedPlatforms(previousId)) {
-            Optional<String> ref = publishedGigStore.externalRef(platform, previousId);
-            moveRecord(platform, previousId, current.id(), ref.orElse(null));
-            results.add(updateOn(platform, ref, current));
+        for (Platform platform : publishedPlatforms(gig.id())) {
+            results.add(updateOn(platform, publishedGigStore.externalRef(platform, gig.id()), gig));
         }
         return results;
     }
@@ -119,13 +116,6 @@ public class GigResyncService implements ResyncGigUseCase {
             }
         }
         return platforms;
-    }
-
-    private void moveRecord(Platform platform, GigId from, GigId to, String externalRef) {
-        if (!from.equals(to)) {
-            publishedGigStore.remove(platform, from);
-            publishedGigStore.record(platform, to, externalRef);
-        }
     }
 
     private static PlatformResult unsupported(Platform platform, String operation) {

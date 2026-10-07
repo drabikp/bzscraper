@@ -1,7 +1,6 @@
 package sk.drabikp.bzscraper.application.port.in;
 
 import sk.drabikp.bzscraper.domain.model.Gig;
-import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.PlatformResult;
 
 import java.util.List;
@@ -14,11 +13,10 @@ import java.util.List;
 public interface ResyncGigUseCase {
 
     /**
-     * Overwrites the platform copies with the gig's current details. {@code previousId}
-     * is the identity the gig was published under — it differs from {@code current.id()}
-     * when the edit changed the gig's date or venue.
+     * Overwrites the platform copies with the gig's current catalog details. Call it after
+     * the catalog update, which has already moved the published records to {@code gig.id()}.
      */
-    List<PlatformResult> pushEdit(GigId previousId, Gig current);
+    List<PlatformResult> pushEdit(Gig gig);
 
     /**
      * Makes the platform copies of a gig that was cancelled there active again.

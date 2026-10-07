@@ -173,7 +173,7 @@ public class GigListView extends VerticalLayout {
                 return;
             }
             // push the edit to any platform the gig was published to
-            onPlatforms("Updated 1 gig.", () -> resyncGig.pushEdit(gig.id(), edited));
+            onPlatforms("Updated 1 gig.", () -> resyncGig.pushEdit(edited));
         });
         save.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
         dialog.getFooter().add(new Button("Cancel", e -> dialog.close()), save);
@@ -205,7 +205,7 @@ public class GigListView extends VerticalLayout {
         }
         onPlatforms("Re-synced " + selected.size() + " gig(s).", () -> {
             List<PlatformResult> all = new ArrayList<>();
-            selected.forEach(g -> all.addAll(resyncGig.pushEdit(g.id(), g)));
+            selected.forEach(g -> all.addAll(resyncGig.pushEdit(g)));
             return all;
         });
     }

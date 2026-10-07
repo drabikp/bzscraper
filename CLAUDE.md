@@ -39,7 +39,7 @@ Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
   - `port/in/` — catalog (`SaveGig`, `ListGigs`, `UpdateGig`, `CancelGig`,
     `DeleteGig`), `PublishGigsUseCase`, `WithdrawGigsUseCase`, `ResyncGigUseCase`,
     `ImportGigsUseCase`, legacy scrape/CSV use cases.
-  - `port/out/` — `GigRepository`, `PublishedGigStore`, per-platform strategies
+  - `port/out/` — `GigRepository`, `PublishedGigStore`, `Transactions`, per-platform strategies
     `GigPublisher` / `GigUpdater` / `GigWithdrawer` / `GigImporter`,
     `BandzonePortalClient` + `BandzoneSession`, `BitPortalClient`, exceptions.
   - `service/` — `GigCatalogService`, `GigPublishingService` (+ `PublishPartitioner`),
@@ -49,9 +49,9 @@ Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
 - **adapter/in/** — `web/` Vaadin: `GigListView` (root route; the catalog grid with
   add/edit/cancel/reactivate/re-sync/delete/publish), `AddGigView`, `ImportView`,
   `GigForm`, `PublishSummaries`; `rest/` `GigSummaryEndpoint`.
-- **adapter/out/** — `persistence/` (JPA `GigEntity`, `JpaGigRepository`);
-  `store/` `TextFilePublishedGigStore` (TSV, default `~/.bzscraper/published-gigs.tsv`,
-  `bzscraper.publish.state-file`); `bandzone/` (scrape provider + importer, Selenium
+- **adapter/out/** — `persistence/` (JPA `GigEntity`/`JpaGigRepository`,
+  `PublishedGigEntity`/`JpaPublishedGigStore`, `SpringTransactions`, `H2ScriptBackup`);
+  `bandzone/` (scrape provider + importer, Selenium
   `SeleniumBandzonePortalClient`, `BandzoneLineupPage`, `BandzoneGigUpdater`,
   `BandzoneGigWithdrawer`, `StubBandzonePortalClient`); `csv/`; `bandsintown/`
   `StubBitPortalClient`.
@@ -64,16 +64,18 @@ Services are plain POJOs wired explicitly in `UseCaseConfiguration`; adapters ar
 
 ## Platform sync
 
-`PublishedGigStore` maps (Platform, GigId) → the platform's external id (`externalRef`,
-e.g. the Bandzone concert id). Orchestrators own the store; strategies are pure push.
+`PublishedGigStore` (table `published_gig`) maps (Platform, GigId) → the platform's
+external id (`externalRef`, e.g. the Bandzone concert id). Orchestrators own the store;
+strategies are pure push.
 
 ```
 publish     GigPublishingService: skip already-published/invalid → GigPublisher.publishNew
             → record ref for PUBLISHED results only (idempotent re-runs)
-edit        GigResyncService.pushEdit(previousId, gig): per platform published under
-            previousId → move the record to the new GigId (same ref) → GigUpdater.update(ref, gig)
-            (no updater → reported "update by hand")
-re-sync     pushEdit(id, gig) with the same id — re-pushes the catalog state
+edit        GigCatalogService.update: in ONE transaction replace the gig row and, if the
+            GigId changed, PublishedGigStore.move the records (refs kept); then
+            GigResyncService.pushEdit(gig) → GigUpdater.update(ref, gig) per published
+            platform (no updater → reported "update by hand")
+re-sync     pushEdit(gig) — re-pushes the catalog state
 cancel      GigWithdrawalService → GigWithdrawer.withdraw(ref, CANCEL)
 delete      GigWithdrawer.withdraw(ref, DELETE) → forget the record
 reactivate  GigResyncService.reactivate: Bandzone can't un-cancel, so DELETE the
@@ -114,9 +116,20 @@ bzscraper.bandzone.selenium.chromedriver=/usr/bin/chromedriver
 Bandsintown has no write API; `StubBitPortalClient` is a placeholder until the
 artist-portal flow is captured. Bandsintown has no updater/withdrawer yet.
 
+## Database
+
+H2 file DB at `./data/bzscraper-gigs` (`bzscraper.db.path`). The schema is owned by
+**Flyway** (`src/main/resources/db/migration/V<n>__*.sql`); Hibernate runs with
+`ddl-auto=validate`, so every entity change needs a new migration (tests run the
+migrations on an in-memory H2 and fail on a mismatch). A pre-Flyway database is
+baselined at V1. The H2 version is pinned in `pom.xml` (`h2.version`) because its file
+format changes between versions. `H2ScriptBackup` writes a plain-SQL `SCRIPT` backup on
+every start to `./data/backups` (one per day, newest 14 kept); restore with
+`org.h2.tools.RunScript`.
+
 ## Key Dependencies
 
-- Spring Boot 4.0.3, Java 21; Spring Data JPA + H2 (file DB `./data/`, `bzscraper.db.path`)
+- Spring Boot 4.0.3, Java 21; Spring Data JPA + H2 2.4.240 (pinned) + Flyway
 - Vaadin 25.0.5 (UI)
 - JSoup 1.22.1 (HTML scraping)
 - OpenCSV 5.12.0 (CSV)
@@ -127,7 +140,8 @@ artist-portal flow is captured. Bandsintown has no updater/withdrawer yet.
 
 JUnit 5 + Mockito + AssertJ (`spring-boot-starter-test`). Services/strategies are
 unit-tested against mocked ports; the domain and CSV exporter have direct unit tests;
-`JpaGigRepositoryTest` covers persistence.
+`JpaGigRepositoryTest` / `JpaPublishedGigStoreTest` cover persistence against the
+migrated schema.
 
 `SeleniumBandzonePortalClientLiveTest` creates, edits (every field, incl. lineup and
 poster) and deletes a real Bandzone gig. Skipped unless `BZ_LIVE=true`; reads
