@@ -50,6 +50,11 @@ final class BitResponses {
         return payload != null ? String.valueOf(payload.get("status")) : null;
     }
 
+    /** A single-event reply's payload (the event as Bandsintown stored it), or null. */
+    static Map<String, Object> payloadOf(Map<String, Object> entry) {
+        return payload(entry);
+    }
+
     /** Short text of a reply, for error messages. */
     /**
      * The validation errors Bandsintown reports per CSV row ({@code "INVALID_START_TIME"}),

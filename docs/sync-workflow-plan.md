@@ -84,7 +84,7 @@ Example: Re-sync of 5 gigs — all on Bandzone; on Bandsintown 3 upcoming + 2 pa
 | Today | As steps |
 | --- | --- |
 | `GigPublisher` (BZ wizard + edit form; BIT CSV + publish dialog) | publish = create (BIT: batch, BZ: single) → complete (BZ: lineup/poster via edit form) → read back |
-| `GigUpdater` | update = bulk edit (BIT) → form edit (BZ; BIT if its form takes past events) → by hand |
+| `GigUpdater` | update = bulk edit (BIT) → form edit (BZ; BIT one at a time: past events, refused rows) → by hand |
 | `GigWithdrawer` CANCEL / DELETE | cancel = cancel (BZ form) / remove (BIT: no cancelled state) → by hand; delete = remove → by hand |
 | `SyncDispatcher.reactivate` (delete + publish) | reactivate = un-cancel (none yet) → remove + create (the composed fallback) |
 | `PlatformCapabilities` / adapter flags | gone: capability = some step accepts the gig |
@@ -93,19 +93,21 @@ The outbox tables stay; a run gets "current step" + "next check" columns.
 
 ## Order of work
 
-1. Read-only check: does Bandsintown's edit form open (and allow changes) for a past event?
+1. **Done:** read-only check — Bandsintown's edit form opens (and allows changes) for a past event.
 2. **Done (2026-10-08):** engine core (`WorkflowEngine`, `SyncStep`, `sync_task.step`) + the
-   **update** workflow; Bandzone (form edit) and Bandsintown (bulk edit) on it. The edit form
-   as a Bandsintown fallback waits for step 1. Since then: a warm browser shared across a
+   **update** workflow; Bandzone (form edit) and Bandsintown (bulk edit) on it. Since then: a warm browser shared across a
    platform's steps and tasks, and Pause / Resume on `/sync`. Not yet: "waiting" and "needs
    you" outcomes — no step needs them until Songkick (approval wait, venue choice).
 3. **Done (2026-10-08):** publish (bulk upload → create form), cancel, delete (remove) and
    reactivate (remove and create again, built from the platform's steps) moved onto it; the
    old publisher/withdrawer adapters and capability flags are gone. Verified live end to end
    on the Bandzone test band (publish → remove).
-3b. Bandsintown's edit form takes past events (seen read-only: `/events/<id>?version=single-page`,
-   every field editable, Save and Delete). A BIT form-edit (and form-remove) step for past
-   events needs one approved test save on the real account first.
+3b. **Done (2026-10-08):** Bandsintown form edit (`BandsintownFormEdit`) — the single-page form
+   (`/events/<id>?version=single-page`) for past events and rows the bulk edit refused; the
+   venue picked from Bandsintown's own (Google) place search in the gig's town. Verified with
+   the one approved real save (SNP, Bratislava → Košice) and then through the engine (bulk
+   edit refused: past → form edit → done). Not yet: a BIT form-remove step for past events
+   (the form has Delete) — deleting a past event stays "by hand".
 4. Backlog: Songkick (venue lookup + "needs you", bulk add for future dates, add/edit forms,
    approval wait, locked events → email).
 

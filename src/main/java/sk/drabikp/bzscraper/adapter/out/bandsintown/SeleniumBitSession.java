@@ -1,6 +1,7 @@
 package sk.drabikp.bzscraper.adapter.out.bandsintown;
 
 import org.openqa.selenium.By;
+import org.openqa.selenium.Keys;
 import org.openqa.selenium.ElementNotInteractableException;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.TimeoutException;
@@ -20,6 +21,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.format.DateTimeFormatter;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -69,7 +71,7 @@ final class SeleniumBitSession implements BitSession {
               const url = String(u && u.url || u);
               const method = String((o && o.method) || (u && u.method) || 'GET').toUpperCase();
               const reply = original.apply(this, arguments);
-              if (/\\/managed-actors\\/\\d+\\/events/.test(url)) {
+              if (/\\/managed-actors\\/\\d+\\/events|\\/api\\//.test(url)) {
                 reply.then(r => r.clone().text().then(t => {
                   let json = null;
                   try { json = JSON.parse(t); } catch (e) {}
@@ -301,6 +303,125 @@ final class SeleniumBitSession implements BitSession {
         return results;
     }
 
+    // --- edit in the single-page form (past events too) ---
+
+    private static final DateTimeFormatter FORM_DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final DateTimeFormatter FORM_TIME = DateTimeFormatter.ofPattern("h:mm a", Locale.US);
+
+    @Override
+    public String editEventInForm(String eventId, Gig gig) throws BitUploadException {
+        try {
+            return formEdit(eventId, gig);
+        } catch (BitUploadException e) {
+            SeleniumBitPortalClient.saveScreenshot(driver, "form-edit");
+            throw e;
+        } catch (RuntimeException e) {
+            SeleniumBitPortalClient.saveScreenshot(driver, "form-edit");
+            throw new BitUploadException("Bandsintown's edit form failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * The event's single-page edit form ({@code ?version=single-page}), which also opens for
+     * past events: the place is picked from Bandsintown's venue search (Google places) — the
+     * suggestion in the gig's town — then dates, times, name and description are set where
+     * they differ, and the form is saved. Returns a note when Bandsintown placed it far from
+     * the town, else null.
+     */
+    private String formEdit(String eventId, Gig gig) throws BitUploadException {
+        driver.get(baseUrl + "/artists/" + artistId + "/events/" + eventId + "?version=single-page");
+        WebElement venue = wait.until(ExpectedConditions.presenceOfElementLocated(By.name("venue_name")));
+        js(CAPTURE_REPLIES);
+        pacer.pause();
+
+        pickVenue(venue, gig);
+        ZonedDateTime start = gig.schedule().showStart();
+        ZonedDateTime end = gig.schedule().showEnd();
+        setField(By.name("start_date"), start.format(FORM_DATE));
+        setField(By.name("start_time"), start.format(FORM_TIME));
+        if (end != null) {
+            setField(By.name("end_date"), end.format(FORM_DATE));
+            setField(By.name("end_time"), end.format(FORM_TIME));
+        }
+        WebElement title = (WebElement) js("var l = Array.from(document.querySelectorAll('label')).find(x =>"
+                + " x.innerText.replace('*', '').trim() === 'Event Name'); return l ? document.getElementById(l.htmlFor) : null;");
+        if (title != null) {
+            setField(title, gig.title());
+        }
+        WebElement description = firstVisible(By.cssSelector("textarea[placeholder='Description'], textarea[name='description']"));
+        if (description != null && gig.description() != null) {
+            setField(description, gig.description());
+        }
+        int mark = replyCount();
+        pacer.pause();
+        pacer.click(driver, visibleButton("Save"));
+        Map<String, Object> reply = awaitReply(mark,
+                r -> !"GET".equals(r.get("method")) && String.valueOf(r.get("url")).contains(eventId), "saving the form");
+        if (BitResponses.httpStatus(reply) != 200 || !BitResponses.ok(reply)) {
+            List<String> refused = BitResponses.rowErrors(reply);
+            throw new BitUploadException("Bandsintown didn't save event " + eventId + " — "
+                    + (refused.isEmpty() ? BitResponses.describe(reply) : String.join(", ", refused)), null, true);
+        }
+        Map<String, Object> saved = BitResponses.payloadOf(reply);
+        return saved == null ? null : placeCheck(gig, saved);
+    }
+
+    /** Searches the venue ("venue town") and picks the suggestion in the gig's town; none → a refusal. */
+    @SuppressWarnings("unchecked")
+    private void pickVenue(WebElement field, Gig gig) throws BitUploadException {
+        String city = gig.location().city();
+        String query = gig.location().venue() != null ? gig.location().venue() + " " + city
+                : city + " " + gig.location().countryName();
+        int mark = replyCount();
+        // the field's own "Clear value" drops the old place; typing over it would keep it
+        WebElement clear = (WebElement) js("var e = arguments[0]; for (var i = 0; i < 4 && e.parentElement; i++)"
+                + " e = e.parentElement; return e.querySelector(\"button[aria-label='Clear value']\");", field);
+        if (clear != null) {
+            pacer.click(driver, clear);
+            pacer.pause();
+        }
+        field = driver.findElement(By.name("venue_name"));
+        pacer.type(driver, field, query);
+        Map<String, Object> reply = awaitReply(mark, r -> String.valueOf(r.get("url")).contains("/venues/autocomplete"),
+                "the venue search");
+        Object payload = reply.get("json") instanceof Map<?, ?> json ? json.get("payload") : null;
+        List<Map<String, Object>> places = payload instanceof List<?> list ? (List<Map<String, Object>>) list : List.of();
+        Map<String, Object> place = BitPlaces.choose(places, gig.location().venue(), city);
+        if (place == null) {
+            throw new BitUploadException("Bandsintown's venue search (Google places) has nothing for '" + query
+                    + "' in " + city + " — set the place there by hand.", null, true);
+        }
+        String placeId = String.valueOf(place.get("place_id"));
+        WebElement option = wait.until(ExpectedConditions.elementToBeClickable(
+                By.cssSelector("li[role='option'][value='" + placeId.replace("'", "") + "'] button")));
+        pacer.click(driver, option);
+        pacer.pause();
+        String picked = driver.findElement(By.name("venue_name")).getDomProperty("value");
+        if (!String.valueOf(place.get("description")).equals(picked)) {
+            throw new BitUploadException("Bandsintown's venue field didn't take the place ('" + picked
+                    + "') — nothing was saved.");
+        }
+    }
+
+    private void setField(By by, String value) {
+        setField(wait.until(ExpectedConditions.presenceOfElementLocated(by)), value);
+    }
+
+    /** Types the value when the field holds something else; a picker's matching option is clicked. */
+    private void setField(WebElement field, String value) {
+        if (value.equals(field.getDomProperty("value"))) {
+            return;
+        }
+        pacer.click(driver, field);
+        field.sendKeys(Keys.chord(Keys.CONTROL, "a"), Keys.BACK_SPACE);
+        pacer.typeIntoFocused(driver, value);
+        pacer.pause();
+        driver.findElements(By.xpath("//*[@role='option' or self::li]")).stream()
+                .filter(WebElement::isDisplayed).filter(e -> value.equals(e.getText().trim()))
+                .findFirst().ifPresentOrElse(option -> pacer.click(driver, option),
+                        () -> field.sendKeys(Keys.TAB));
+    }
+
     // --- delete ---
 
     @Override
@@ -401,16 +522,22 @@ final class SeleniumBitSession implements BitSession {
         Map<String, String> found = new LinkedHashMap<>();
         for (Map<String, Object> event : upcomingEvents()) {
             if (ids.contains(idOf(event))) {
-                found.put(idOf(event), event.get("status") + " " + event.get("start_date") + " (upcoming)");
+                found.put(idOf(event), described(event) + " (upcoming)");
             }
         }
         pacer.pause();
         for (Map<String, Object> event : pastEvents()) {
             if (ids.contains(idOf(event))) {
-                found.putIfAbsent(idOf(event), event.get("status") + " " + event.get("start_date") + " (past)");
+                found.putIfAbsent(idOf(event), described(event) + " (past)");
             }
         }
         return found;
+    }
+
+    private static String described(Map<String, Object> event) {
+        return event.get("status") + " " + event.get("start_date") + " at " + event.get("venue_name") + ", "
+                + event.get("venue_city") + ", " + event.get("venue_country") + " ("
+                + event.get("venue_latitude") + ", " + event.get("venue_longitude") + ")";
     }
 
     /** All past events: the first 20 come with the tab, the rest load as the list is scrolled. */

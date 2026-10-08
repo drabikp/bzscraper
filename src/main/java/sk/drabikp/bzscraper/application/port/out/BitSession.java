@@ -34,6 +34,15 @@ public interface BitSession extends AutoCloseable {
     List<Edited> updateEvents(List<Map.Entry<String, Gig>> edits) throws BitUploadException;
 
     /**
+     * Edits the event in the portal's single-page form — which also takes PAST events, unlike
+     * the upload: the place is picked from Bandsintown's venue search in the gig's town.
+     * Returns a note when Bandsintown placed it far from the town, else null.
+     *
+     * @throws BitUploadException permanent when Bandsintown refused it or has no such place
+     */
+    String editEventInForm(String eventId, Gig gig) throws BitUploadException;
+
+    /**
      * Removes the event from Bandsintown. {@code cancelled} gives "the event was
      * canceled" as the reason. An event that is already gone is not an error.
      */

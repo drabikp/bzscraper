@@ -74,6 +74,35 @@ class BandsintownGigAdaptersTest {
     }
 
     @Test
+    void the_form_edit_takes_past_events_one_at_a_time_and_passes_on_the_place_check() throws Exception {
+        BandsintownFormEdit formEdit = new BandsintownFormEdit(portalClient);
+        when(portalClient.openSession()).thenReturn(session);
+        when(session.editEventInForm("101", gig)).thenReturn("Bandsintown placed it 40 km away");
+
+        assertThat(formEdit.refusal(gig)).as("past events are what it is for").isEmpty();
+        assertThat(formEdit.batchSize()).isEqualTo(1);
+        assertThat(formEdit.run(List.of(new SyncStep.Item("101", gig)))).singleElement().satisfies(o -> {
+            assertThat(o.kind()).isEqualTo(StepOutcome.Kind.DONE);
+            assertThat(o.note()).contains("40 km");
+        });
+        verify(session).close();
+    }
+
+    @Test
+    void the_form_edit_refuses_what_bandsintown_refused_and_retries_what_broke() throws Exception {
+        BandsintownFormEdit formEdit = new BandsintownFormEdit(portalClient);
+        when(portalClient.openSession()).thenReturn(session);
+        when(session.editEventInForm(any(), any()))
+                .thenThrow(new BitUploadException("no place in Hranice", null, true))
+                .thenThrow(new BitUploadException("timeout"));
+
+        assertThat(formEdit.run(List.of(new SyncStep.Item("101", gig), new SyncStep.Item("102", gig))))
+                .extracting(StepOutcome::kind).containsExactly(StepOutcome.Kind.REFUSED, StepOutcome.Kind.FAILED);
+        assertThat(formEdit.run(List.of(new SyncStep.Item("103", gig.cancel()))))
+                .extracting(StepOutcome::kind).containsExactly(StepOutcome.Kind.DONE);
+    }
+
+    @Test
     void cancel_removes_the_event_with_the_cancelled_reason_and_remove_without_it() throws Exception {
         when(portalClient.openSession()).thenReturn(session);
 

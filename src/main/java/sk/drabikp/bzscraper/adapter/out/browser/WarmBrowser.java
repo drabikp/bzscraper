@@ -15,9 +15,9 @@ import java.util.concurrent.TimeUnit;
  * Keeps a platform's browser open for a short while after a step is done with it, so the
  * next step (the next gig of a one-at-a-time run, the next task of the pass) takes it over
  * instead of starting a browser and checking the login again. Closed when nobody took it
- * within {@code idle}, and on shutdown. The platform's one-browser-at-a-time rule is kept:
- * a parked browser is only taken while holding {@code oneBrowser}, and only closed by the
- * idle timer when it can get it.
+ * within {@code idle}, and when the app (the JVM) shuts down. The platform's one browser at
+ * a time is kept: a parked browser is only taken while holding {@code oneBrowser}, and only
+ * closed by the idle timer when it can get it.
  */
 public final class WarmBrowser {
 
@@ -37,6 +37,9 @@ public final class WarmBrowser {
             thread.setDaemon(true);
             return thread;
         });
+        // a parked browser must not outlive the app (it would hold the profile) — also when
+        // the client is used outside Spring (live tests)
+        Runtime.getRuntime().addShutdownHook(new Thread(this::close, name + "-browser-shutdown"));
     }
 
     /** The parked browser if it still answers, else null. Call while holding {@code oneBrowser}. */

@@ -94,7 +94,8 @@ TRANSACTION as the catalog change (`SyncRequests`, called by `GigCatalogService`
 
 ```
 PUBLISH     bulk upload (BIT: BandsintownBulkCreate, 25 rows) → create form (BZ: BandzoneFormCreate)
-UPDATE      bulk edit (BIT: BandsintownBulkEdit, no past events) → form edit (BZ: BandzoneFormEdit)
+UPDATE      bulk edit (BIT: BandsintownBulkEdit, no past events) → form edit (BZ: BandzoneFormEdit;
+            BIT: BandsintownFormEdit, one at a time — past events and refused rows)
 CANCEL      cancel (BZ: BandzoneCancel; BIT: BandsintownCancel = remove "canceled", no past events)
 DELETE      remove (BZ: BandzoneRemove; BIT: BandsintownRemove, no past events) → record forgotten
 REACTIVATE  remove and create again — built by the engine from the platform's remove + create
@@ -269,12 +270,17 @@ bzscraper.bandsintown.pacing.min-ms / .max-ms             # human pauses between
   to confirm PUBLISHED. Silent = "Do Not Announce = Y" + switch off (`announced_at`
   2000-01-01).
 - **Update** — Bulk Upload of a row WITH `Event Id` (+ `Status`) edits the event in place.
+- **Form edit** (`BandsintownFormEdit`, `editEventInForm`) — the event's single-page form
+  (`/artists/<id>/events/<event>?version=single-page`), which opens for past events too:
+  "Clear value" on the venue, type "venue town", pick the suggestion in the gig's town
+  (`BitPlaces`, by Google `place_id`) and check the field shows it; then dates, times, name,
+  description; Save → the reply's place is checked (`placeCheck`, > 25 km off → a note).
 - **When** — rows carry the band's `Slot` when the gig has one (`GigSchedule.showStart/showEnd`),
   else the event's start/end: Bandsintown is about when the artist plays.
 - **Past events** — a published past gig is listed under Past Events, not Upcoming: the
   create read-back checks the past list too. Deleting a PAST event is not automated (refused,
-  permanent: "delete it by hand"); an event in neither list counts as already removed. Edits
-  of past events were refused with `INVALID_START_TIME`.
+  permanent: "delete it by hand"); an event in neither list counts as already removed. Bulk
+  edits of past events are refused (`INVALID_START_TIME`) → the form edit does them.
 - **List (import)** — Upcoming + Past tabs' event lists (past is paged: `x-next-page`,
   more load on scroll) → `BitEventMapper` (no entry info on Bandsintown).
 - **Cancel/Delete** — Bandsintown has no cancelled state: both remove the event via the
