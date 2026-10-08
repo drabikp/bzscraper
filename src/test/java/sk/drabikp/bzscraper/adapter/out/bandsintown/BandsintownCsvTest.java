@@ -3,8 +3,11 @@ package sk.drabikp.bzscraper.adapter.out.bandsintown;
 import com.opencsv.CSVReader;
 import org.junit.jupiter.api.Test;
 import sk.drabikp.bzscraper.TestGigs;
+import sk.drabikp.bzscraper.domain.model.Address;
+import sk.drabikp.bzscraper.domain.model.Country;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.GigSchedule;
+import sk.drabikp.bzscraper.domain.model.Location;
 import sk.drabikp.bzscraper.domain.model.Slot;
 
 import java.io.StringReader;
@@ -74,5 +77,19 @@ class BandsintownCsvTest {
                 .containsExactly("2026-08-28", "19:30", "2026-08-28", "20:45");
         assertThat(Arrays.copyOfRange(parse(BandsintownCsv.newEvents(List.of(withoutSlot), "X", false)).get(1), 8, 12))
                 .containsExactly("2026-08-27", "12:00", "2026-08-30", "00:00");
+    }
+
+    @Test
+    void street_and_postal_code_go_along_so_bandsintown_finds_the_right_town() throws Exception {
+        Gig located = new Gig("Fest", gig.schedule(), new Location("Zámecký klub", "Hranice", Country.CZECHIA,
+                new Address("Pernštejnské nám. 1", "753 01", "okres Přerov", "Olomoucký kraj", 49.548, 17.735)),
+                List.of(), gig.admission(), null, null, null, null, false);
+
+        String[] row = parse(BandsintownCsv.newEvents(List.of(located), "X", false)).get(1);
+
+        assertThat(row[3]).isEqualTo("Pernštejnské nám. 1");
+        assertThat(row[4]).isEqualTo("Hranice");
+        assertThat(row[6]).isEqualTo("753 01");
+        assertThat(parse(BandsintownCsv.newEvents(List.of(gig), "X", false)).get(1)[6]).isEmpty();
     }
 }

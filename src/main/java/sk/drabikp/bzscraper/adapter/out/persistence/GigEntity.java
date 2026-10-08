@@ -6,6 +6,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import sk.drabikp.bzscraper.domain.model.Address;
 import sk.drabikp.bzscraper.domain.model.Country;
 import sk.drabikp.bzscraper.domain.model.EntryType;
 
@@ -36,6 +37,13 @@ public class GigEntity {
     private LocalDateTime slotEnd;
     private String venue;
     private String city;
+    /** The town's district etc. when it was picked from the place search (all may be null). */
+    private String street;
+    private String postalCode;
+    private String district;
+    private String region;
+    private Double latitude;
+    private Double longitude;
     @Enumerated(EnumType.STRING)
     private Country country;
     @Column(length = 2000)
@@ -78,6 +86,20 @@ public class GigEntity {
     void setSlot(LocalDateTime start, LocalDateTime end) {
         this.slotStart = start;
         this.slotEnd = end;
+    }
+
+    void setAddress(Address address) {
+        this.street = address == null ? null : address.street();
+        this.postalCode = address == null ? null : address.postalCode();
+        this.district = address == null ? null : address.district();
+        this.region = address == null ? null : address.region();
+        this.latitude = address == null ? null : address.latitude();
+        this.longitude = address == null ? null : address.longitude();
+    }
+
+    Address getAddress() {
+        Address address = new Address(street, postalCode, district, region, latitude, longitude);
+        return address.equals(new Address(null, null, null, null, null, null)) ? null : address;
     }
 
     LocalDateTime getSlotStart() {

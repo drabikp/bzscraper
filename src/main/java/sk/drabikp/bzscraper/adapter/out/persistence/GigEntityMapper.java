@@ -53,6 +53,7 @@ final class GigEntityMapper {
                 gig.ticketUrl(),
                 gig.posterImageUrl(),
                 gig.cancelled());
+        entity.setAddress(gig.location().address());
         Slot slot = gig.schedule().slot();
         if (slot != null) {
             entity.setSlot(slot.start().toLocalDateTime(), slot.end() != null ? slot.end().toLocalDateTime() : null);
@@ -70,7 +71,7 @@ final class GigEntityMapper {
         return new Gig(
                 e.getTitle(),
                 new GigSchedule(start, end, slot),
-                new Location(e.getVenue(), e.getCity(), e.getCountry()),
+                new Location(e.getVenue(), e.getCity(), e.getCountry(), e.getAddress()),
                 splitLineup(e.getLineup()),
                 toAdmission(e.getEntryType(), e.getEntryFee()),
                 e.getDescription(),

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
+import sk.drabikp.bzscraper.domain.model.Address;
 import sk.drabikp.bzscraper.domain.model.Admission;
 import sk.drabikp.bzscraper.domain.model.Country;
 import sk.drabikp.bzscraper.domain.model.DateRange;
@@ -74,6 +75,19 @@ class JpaGigRepositoryTest {
         repository.save(new Gig("Moto Fest", festival.withSlot(null), gig.location(), List.of(), Admission.free(),
                 null, null, null, null, false));
         assertThat(repository.findById(gig.id()).orElseThrow().schedule().hasSlot()).as("slot removed").isFalse();
+    }
+
+    @Test
+    void keeps_the_address_that_tells_same_named_towns_apart() {
+        Address address = new Address("Pernštejnské nám. 1", "753 01", "okres Přerov", "Olomoucký kraj", 49.548, 17.735);
+        Gig gig = new Gig("Fest", GigSchedule.startingAt(prague(2026, 9, 18, 21, 30)),
+                new Location("Zámecký klub", "Hranice", Country.CZECHIA, address), List.of(), Admission.free(),
+                null, null, null, null, false);
+
+        repository.save(gig);
+
+        assertThat(repository.findById(gig.id()).orElseThrow().location()).isEqualTo(gig.location());
+        assertThat(repository.findById(fullGig().id())).isEmpty();
     }
 
     @Test

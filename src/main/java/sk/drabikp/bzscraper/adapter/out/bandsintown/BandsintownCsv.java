@@ -1,6 +1,7 @@
 package sk.drabikp.bzscraper.adapter.out.bandsintown;
 
 import com.opencsv.CSVWriter;
+import sk.drabikp.bzscraper.domain.model.Address;
 import sk.drabikp.bzscraper.domain.model.Gig;
 
 import java.io.IOException;
@@ -79,6 +80,19 @@ public final class BandsintownCsv {
         return write(header, rows);
     }
 
+    // Bandsintown finds the place from these texts; with only a town's name it guessed the
+    // wrong one of several (Hranice near Cheb, a Hořice near Brno) — street and postal code
+    // tell them apart.
+    private static String street(Gig gig) {
+        Address address = gig.location().address();
+        return address != null && address.street() != null ? address.street() : "";
+    }
+
+    private static String postalCode(Gig gig) {
+        Address address = gig.location().address();
+        return address != null && address.postalCode() != null ? address.postalCode() : "";
+    }
+
     private static String[] row(Gig gig, String artistName) {
         // Bandsintown lists when the ARTIST plays: the band's slot when the gig has one
         // (a festival over several days), else the event itself.
@@ -89,10 +103,10 @@ public final class BandsintownCsv {
                 nullToEmpty(artistName),                                        // Artist Name
                 gig.location().displayVenue(),                                  // Venue*
                 gig.location().countryName(),                                   // Country*
-                "",                                                             // Address
+                street(gig),                                                    // Address
                 gig.location().city(),                                          // City*
                 "",                                                             // Region*
-                "",                                                             // Postal Code
+                postalCode(gig),                                                // Postal Code
                 gig.location().timezone(),                                      // Timezone*
                 start.format(DATE),                                             // Start Date*
                 start.format(TIME),                                             // Start Time*

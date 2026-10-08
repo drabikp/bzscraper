@@ -12,6 +12,7 @@ import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
 import com.vaadin.flow.theme.lumo.LumoUtility;
+import sk.drabikp.bzscraper.application.port.in.FindPlacesUseCase;
 import sk.drabikp.bzscraper.application.port.in.SaveGigUseCase;
 
 /**
@@ -22,7 +23,7 @@ import sk.drabikp.bzscraper.application.port.in.SaveGigUseCase;
 @PageTitle("Add gig")
 public class AddGigView extends VerticalLayout {
 
-    public AddGigView(SaveGigUseCase saveGig) {
+    public AddGigView(SaveGigUseCase saveGig, FindPlacesUseCase places) {
         setSizeFull();
         setAlignItems(FlexComponent.Alignment.CENTER);
         addClassNames(LumoUtility.Padding.LARGE);
@@ -42,7 +43,7 @@ public class AddGigView extends VerticalLayout {
         hint.addClassNames(LumoUtility.TextColor.SECONDARY, LumoUtility.Margin.Top.NONE);
         RouterLink back = new RouterLink("← Catalog", GigListView.class);
 
-        GigForm form = new GigForm();
+        GigForm form = new GigForm(places);
         form.setWidthFull();
 
         Button save = new Button("Save gig");

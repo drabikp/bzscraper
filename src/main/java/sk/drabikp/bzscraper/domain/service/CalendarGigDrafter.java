@@ -41,7 +41,7 @@ public final class CalendarGigDrafter {
             Pattern.compile("-?\\d{1,3}\\.\\d+\\s*[NSns]?\\s*,\\s*-?\\d{1,3}\\.\\d+\\s*[EWew]?");
     private static final Pattern PLUS_CODE =
             Pattern.compile("(?i)[23456789CFGHJMPQRVWX]{4,8}\\+[23456789CFGHJMPQRVWX]{2,3}");
-    private static final Pattern POSTAL_CODE_CITY = Pattern.compile("(\\d{3})\\s?\\d{2}\\s+(\\D.*)");
+    private static final Pattern POSTAL_CODE_CITY = Pattern.compile("(\\d{3})\\s?(\\d{2})\\s+(\\D.*)");
     /**
      * Postal areas whose map addresses name only the city district ("040 01 Staré Mesto"):
      * the first three digits of the postal code → the city.
@@ -66,7 +66,8 @@ public final class CalendarGigDrafter {
         }
         Place place = place(event.location());
         return new CalendarGigDraft(event.id(), event.title(), date, showTime, place.venue(), place.city(),
-                place.country(), event.allDay() ? null : event.start().toLocalTime());
+                place.country(), place.street(), place.postalCode(),
+                event.allDay() ? null : event.start().toLocalTime());
     }
 
     static Optional<LocalTime> showTime(String notes, BandProfile profile) {
@@ -88,8 +89,12 @@ public final class CalendarGigDrafter {
     }
 
     /** Where an event is, as far as its place says; parts it doesn't say are null. */
-    record Place(String venue, String city, Country country) {
-        static final Place NOWHERE = new Place(null, null, null);
+    record Place(String venue, String city, Country country, String street, String postalCode) {
+        static final Place NOWHERE = new Place(null, null, null, null, null);
+
+        Place(String venue, String city, Country country) {
+            this(venue, city, country, null, null);
+        }
     }
 
     static Place place(String location) {
@@ -111,15 +116,17 @@ public final class CalendarGigDrafter {
             }
         }
         if (parts.isEmpty()) {
-            return new Place(null, null, country);
+            return new Place(null, null, country, null, null);
         }
         int cityAt = -1;
         String city = null;
+        String postalCode = null;
         for (int i = parts.size() - 1; i >= 0 && city == null; i--) {
             Matcher postal = POSTAL_CODE_CITY.matcher(parts.get(i));
             if (postal.matches()) {
                 cityAt = i;
-                city = CITY_OF_DISTRICTS.getOrDefault(postal.group(1), cleanCity(postal.group(2)));
+                postalCode = postal.group(1) + " " + postal.group(2);
+                city = CITY_OF_DISTRICTS.getOrDefault(postal.group(1), cleanCity(postal.group(3)));
             }
         }
         if (city == null) {
@@ -134,7 +141,10 @@ public final class CalendarGigDrafter {
                 venue = first;
             }
         }
-        return new Place(venue, city.isEmpty() ? null : city, country);
+        // the part before the postal code, when it has a house number: "Hlavná 12"
+        String street = postalCode != null && cityAt > 1 && parts.get(cityAt - 1).matches(".*\\p{L}.*\\d.*")
+                ? parts.get(cityAt - 1) : null;
+        return new Place(venue, city.isEmpty() ? null : city, country, street, postalCode);
     }
 
     private static String cleanCity(String raw) {

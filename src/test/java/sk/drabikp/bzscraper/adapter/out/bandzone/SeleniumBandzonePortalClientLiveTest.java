@@ -3,6 +3,7 @@ package sk.drabikp.bzscraper.adapter.out.bandzone;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import sk.drabikp.bzscraper.application.port.out.BandzoneSession;
+import sk.drabikp.bzscraper.domain.model.Address;
 import sk.drabikp.bzscraper.domain.model.Admission;
 import sk.drabikp.bzscraper.domain.model.Country;
 import sk.drabikp.bzscraper.domain.model.Gig;
@@ -66,7 +67,9 @@ class SeleniumBandzonePortalClientLiveTest {
                 null, "https://bandzone.cz/img/default/band-single-small.png", false);
         Gig edited = new Gig("TEST selenium client edited (smazat)",
                 GigSchedule.startingAt(ZonedDateTime.of(2026, 11, 14, 21, 30, 0, 0, PRAGUE)),
-                new Location("Garáž u Nováků", "Brno", Country.CZECHIA), editedLineup,
+                // one of three towns called Hranice: the district picks Bandzone's right one
+                new Location("Garáž u Nováků", "Hranice", Country.CZECHIA, new Address(null, "753 01",
+                        "okres Přerov", "Olomoucký kraj", 49.548, 17.735)), editedLineup,
                 Admission.voluntary(), "edited by the live test", null, null, null, false);
 
         assertThatCode(() -> {

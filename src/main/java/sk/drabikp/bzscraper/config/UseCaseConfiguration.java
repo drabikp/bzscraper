@@ -16,6 +16,7 @@ import sk.drabikp.bzscraper.application.port.out.GigProvider;
 import sk.drabikp.bzscraper.application.port.out.GigPublisher;
 import sk.drabikp.bzscraper.application.port.out.GigRepository;
 import sk.drabikp.bzscraper.application.port.out.GigWithdrawer;
+import sk.drabikp.bzscraper.application.port.out.PlaceSearch;
 import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.application.port.out.SyncNotifier;
 import sk.drabikp.bzscraper.application.port.out.SyncOutbox;
@@ -32,6 +33,7 @@ import sk.drabikp.bzscraper.application.service.GigImportService;
 import sk.drabikp.bzscraper.application.service.GigPublishingService;
 import sk.drabikp.bzscraper.application.service.GigQueryService;
 import sk.drabikp.bzscraper.application.service.GigResyncService;
+import sk.drabikp.bzscraper.application.service.PlaceService;
 import sk.drabikp.bzscraper.application.service.SyncDispatcher;
 import sk.drabikp.bzscraper.application.service.SyncLogService;
 import sk.drabikp.bzscraper.application.service.SyncRequests;
@@ -76,6 +78,11 @@ public class UseCaseConfiguration {
     @Bean
     PlatformSupport platformSupport(List<GigPublisher> publishers, List<GigWithdrawer> withdrawers) {
         return AdapterCapabilities.of(publishers, withdrawers);
+    }
+
+    @Bean
+    PlaceService placeService(PlaceSearch placeSearch) {
+        return new PlaceService(placeSearch);
     }
 
     /** Runs the workflow actions (update) through the platforms' steps — docs/sync-workflow-plan.md. */

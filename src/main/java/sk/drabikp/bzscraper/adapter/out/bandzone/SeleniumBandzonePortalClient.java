@@ -21,6 +21,7 @@ import sk.drabikp.bzscraper.application.port.out.BandzoneSession;
 import sk.drabikp.bzscraper.application.port.out.BandzoneUploadException;
 import sk.drabikp.bzscraper.domain.model.EntryType;
 import sk.drabikp.bzscraper.domain.model.Gig;
+import sk.drabikp.bzscraper.domain.model.Location;
 
 import java.io.File;
 import java.io.IOException;
@@ -250,7 +251,7 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
                 }
                 // Autocomplete picks reload the form via AJAX, so they go before the plain
                 // fields; the venue search only offers clubs of the selected city.
-                selectCity(gig.location().city());
+                selectCity(gig.location());
                 selectVenue(gig.location().venue());
                 // the update form uses the same field names as the create wizard
                 setValue(driver, "[name='start[date]']", gig.schedule().start().format(BZ_DATE));
@@ -356,49 +357,73 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
         private void fillDateAndCity(Gig gig) throws BandzoneUploadException {
             setValue(driver, "[name='start[date]']", gig.schedule().start().format(BZ_DATE));
             setValue(driver, "[name='start[time]']", gig.schedule().start().format(BZ_TIME));
-            selectCity(gig.location().city());
+            selectCity(gig.location());
             jsClickByName(driver, "continue");
         }
 
         /**
-         * Picks the city through the JS autocomplete. Skipped when the form already holds
-         * it (editing a gig in the same city); otherwise waits for {@code cityId} to take
-         * the newly picked value.
+         * Picks the town through the city search: the suggestion that fits by name, country
+         * and district ({@link BandzoneTowns}); several fits or none → a clear error for the
+         * user, never a guess. Then waits for {@code cityId} to take the picked town.
          */
-        private void selectCity(String city) throws BandzoneUploadException {
+        private void selectCity(Location location) throws BandzoneUploadException {
+            String city = location.city();
             String currentText = driver.findElement(By.name("cityId__container[textInput]")).getAttribute("value");
             String previousId = driver.findElement(By.name("cityId")).getAttribute("value");
-            if (city.equalsIgnoreCase(currentText) && previousId != null && !previousId.isBlank()) {
+            // The form shows only the town's name, and a name may be the wrong town of several
+            // (once: a Czech village for Košice) — a town picked from the place search is
+            // therefore chosen again every time; only a merely typed one is kept as it is.
+            if (location.district() == null && city.equalsIgnoreCase(currentText)
+                    && previousId != null && !previousId.isBlank()) {
                 return;
             }
             setValue(driver, "[name='cityId__container[textInput]']", city);
             jsClickByName(driver, "cityId__container[searchButton]");
 
-            WebElement suggestion;
+            List<BandzoneTowns.Suggestion> suggestions;
             try {
-                suggestion = wait.until(ExpectedConditions.presenceOfElementLocated(By.xpath(
-                        "//li[starts-with(normalize-space(.), " + xpathLiteral(city) + ")]")));
+                suggestions = wait.until(d -> townSuggestions());
             } catch (TimeoutException e) {
-                throw new BandzoneUploadException("Bandzone doesn't know the city '" + city
-                        + "' — correct the gig's city (the town's name, e.g. not just a district) and try again.",
-                        e, true);
+                throw new BandzoneUploadException("Bandzone's city search gave nothing for '" + city
+                        + "' — correct the gig's city (the town's name, not a district) and try again.", e, true);
+            }
+            BandzoneTowns.Choice choice = BandzoneTowns.choose(city, location.country(), location.district(),
+                    suggestions);
+            if (choice.pick() == null) {
+                throw new BandzoneUploadException(choice.problem(), null, true);
             }
             WebElement cityIdInput = driver.findElement(By.name("cityId"));
-            jsClick(driver, suggestion);
+            jsClick(driver, driver.findElement(By.cssSelector("li[data-bz-town='" + choice.pick().index() + "']")));
             awaitFormReload(cityIdInput);
-
             wait.until(d -> {
                 String v = d.findElement(By.name("cityId")).getAttribute("value");
-                return v != null && !v.isBlank() && !v.equals(previousId);
+                return v != null && !v.isBlank();
             });
         }
 
-        /** An XPath string literal for any text (a city name may contain an apostrophe). */
-        private static String xpathLiteral(String text) {
-            if (!text.contains("'")) {
-                return "'" + text + "'";
+        /**
+         * The city search's suggestions (name + "okres …, kraj …[, Slovensko]"), each marked
+         * {@code data-bz-town=<index>} to click it; null while none are shown. The list's last
+         * entry offers to add a new town — never used.
+         */
+        @SuppressWarnings("unchecked")
+        private List<BandzoneTowns.Suggestion> townSuggestions() {
+            List<List<Object>> rows = (List<List<Object>>) ((JavascriptExecutor) driver).executeScript(
+                    "var items = Array.from(document.querySelectorAll('li')).filter(li => li.querySelector('.name'));"
+                            + "var adds = Array.from(document.querySelectorAll('li')).some(li => /přidat nové město/i.test(li.innerText));"
+                            + "if (!items.length && !adds) return null;"
+                            + "return items.map((li, i) => { li.setAttribute('data-bz-town', i);"
+                            + " var d = li.querySelector('.description');"
+                            + " return [li.querySelector('.name').innerText.trim(), d ? d.innerText.trim() : '']; });");
+            if (rows == null) {
+                return null;
             }
-            return "concat('" + text.replace("'", "', \"'\", '") + "')";
+            List<BandzoneTowns.Suggestion> suggestions = new ArrayList<>();
+            for (int i = 0; i < rows.size(); i++) {
+                suggestions.add(new BandzoneTowns.Suggestion(i, String.valueOf(rows.get(i).get(0)),
+                        String.valueOf(rows.get(i).get(1))));
+            }
+            return suggestions;
         }
 
         /**

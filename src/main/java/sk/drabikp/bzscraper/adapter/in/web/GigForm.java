@@ -7,6 +7,8 @@ import com.vaadin.flow.component.radiobutton.RadioButtonGroup;
 import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.component.timepicker.TimePicker;
+import sk.drabikp.bzscraper.application.port.in.FindPlacesUseCase;
+import sk.drabikp.bzscraper.domain.model.Address;
 import sk.drabikp.bzscraper.domain.model.Admission;
 import sk.drabikp.bzscraper.domain.model.CalendarGigDraft;
 import sk.drabikp.bzscraper.domain.model.Country;
@@ -15,6 +17,7 @@ import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.GigSchedule;
 import sk.drabikp.bzscraper.domain.model.Location;
 import sk.drabikp.bzscraper.domain.model.Slot;
+import sk.drabikp.bzscraper.domain.model.Town;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -40,7 +43,10 @@ class GigForm extends FormLayout {
     private final TimePicker slotTime = new TimePicker("Band's slot: start");
     private final TimePicker slotEndTime = new TimePicker("Band's slot: end (optional)");
     private final TextField venue = new TextField("Venue");
-    private final TextField city = new TextField("City");
+    private final ComboBox<Town> city = new ComboBox<>("City");
+    private final TextField street = new TextField("Street (optional)");
+    private final TextField postalCode = new TextField("Postal code (optional)");
+    private final FindPlacesUseCase places;
     private final ComboBox<Country> country = new ComboBox<>("Country");
     private final TextField bands = new TextField("Lineup (comma-separated)");
     private final RadioButtonGroup<EntryType> entryType = new RadioButtonGroup<>("Entry");
@@ -50,7 +56,23 @@ class GigForm extends FormLayout {
     private final TextField ticketUrl = new TextField("Ticket URL");
     private final TextField posterUrl = new TextField("Poster image URL");
 
-    GigForm() {
+    GigForm(FindPlacesUseCase places) {
+        this.places = places;
+        city.setItemLabelGenerator(Town::label);
+        city.setItems(query -> places.search(query.getFilter().orElse("")).stream()
+                .skip(query.getOffset()).limit(query.getLimit()));
+        city.setAllowCustomValue(true);
+        city.addCustomValueSetListener(e -> city.setValue(Town.typed(e.getDetail(), country.getValue())));
+        city.addValueChangeListener(e -> {
+            Town town = e.getValue();
+            if (town != null && town.resolved()) {
+                country.setValue(town.country());
+                if (postalCode.isEmpty() && town.postalCode() != null) {
+                    postalCode.setValue(town.postalCode());
+                }
+            }
+            describeTown();
+        });
         country.setItems(Country.values());
         country.setItemLabelGenerator(Country::displayName);
         entryType.setItems(EntryType.values());
@@ -62,7 +84,7 @@ class GigForm extends FormLayout {
         clear();
 
         add(name, venue, startDate, startTime, endDate, endTime, slotDate, slotTime, slotEndTime, city, country,
-                bands, entryType, entryFee, facebookUrl, ticketUrl, posterUrl, description);
+                street, postalCode, bands, entryType, entryFee, facebookUrl, ticketUrl, posterUrl, description);
         setColspan(slotDate, 2);
         setResponsiveSteps(
                 new ResponsiveStep("0", 1),
@@ -82,6 +104,8 @@ class GigForm extends FormLayout {
         slotEndTime.clear();
         venue.clear();
         city.clear();
+        street.clear();
+        postalCode.clear();
         bands.clear();
         entryFee.clear();
         description.clear();
@@ -109,7 +133,10 @@ class GigForm extends FormLayout {
             }
         }
         venue.setValue(gig.location().displayVenue().equals("TBA") ? "" : gig.location().venue());
-        city.setValue(gig.location().city());
+        city.setValue(Town.of(gig.location()));
+        Address address = gig.location().address();
+        street.setValue(address != null && address.street() != null ? address.street() : "");
+        postalCode.setValue(address != null && address.postalCode() != null ? address.postalCode() : "");
         country.setValue(gig.location().country());
         bands.setValue(String.join(", ", gig.lineup()));
         entryType.setValue(gig.admission().type());
@@ -132,7 +159,13 @@ class GigForm extends FormLayout {
                     + " (usually the arrival)");
         }
         venue.setValue(draft.venue() == null ? "" : draft.venue());
-        city.setValue(draft.city() == null ? "" : draft.city());
+        if (draft.city() != null) {
+            // the calendar's postal code tells same-named towns apart; one fit → picked
+            city.setValue(places.resolve(draft.city(), draft.country(), draft.postalCode())
+                    .orElse(Town.typed(draft.city(), draft.country())));
+        }
+        street.setValue(draft.street() == null ? "" : draft.street());
+        postalCode.setValue(draft.postalCode() == null ? "" : draft.postalCode());
         if (draft.country() != null) {
             country.setValue(draft.country());
         } else {
@@ -165,6 +198,14 @@ class GigForm extends FormLayout {
             last = last.minusDays(1);
         }
         return last.isAfter(startDate.getValue());
+    }
+
+    /** Under the city: which town it is, or that it wasn't picked from the list. */
+    private void describeTown() {
+        Town town = city.getValue();
+        city.setHelperText(town == null ? null : town.resolved()
+                ? town.district() + (town.region() != null ? ", " + town.region() : "")
+                : "Not picked from the list — a platform may choose another town of that name");
     }
 
     /** Moves the start to another day and/or time (null = keep), keeping the length when there is an end. */
@@ -224,8 +265,12 @@ class GigForm extends FormLayout {
             }
             slot = new Slot(slotStart, slotEnd);
         }
+        Town town = city.getValue();
+        Address address = town.address(nullIfBlank(street.getValue()), nullIfBlank(postalCode.getValue()));
         return Gig.create(name.getValue(), new GigSchedule(start, end, slot),
-                new Location(venue.getValue(), city.getValue(), c), parseLineup(bands.getValue()), admission,
+                new Location(venue.getValue(), town.name(), c,
+                        address.equals(new Address(null, null, null, null, null, null)) ? null : address),
+                parseLineup(bands.getValue()), admission,
                 nullIfBlank(description.getValue()), nullIfBlank(facebookUrl.getValue()),
                 nullIfBlank(ticketUrl.getValue()), nullIfBlank(posterUrl.getValue()));
     }

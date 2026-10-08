@@ -45,7 +45,7 @@ public class BandsintownGigPublisher implements GigPublisher {
         try (BitSession session = portalClient.openSession()) {
             return session.createEvents(gigs, notifyFollowers).stream()
                     .map(c -> c.isPublished()
-                            ? PublishResult.published(Platform.BANDSINTOWN, c.gig(), c.eventId())
+                            ? PublishResult.publishedWithNote(Platform.BANDSINTOWN, c.gig(), c.eventId(), c.note())
                             : PublishResult.failed(Platform.BANDSINTOWN, c.gig(), c.error()))
                     .toList();
         } catch (BitUploadException e) {

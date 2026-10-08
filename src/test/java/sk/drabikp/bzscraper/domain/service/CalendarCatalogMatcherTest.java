@@ -26,7 +26,8 @@ class CalendarCatalogMatcherTest {
             ZonedDateTime.of(2026, 11, 20, 20, 0, 0, 0, ZoneId.of("Europe/Prague")));
 
     private static CalendarGigDraft draft(LocalDate date, LocalTime showTime) {
-        return new CalendarGigDraft("uid", "Fest", date, showTime, "Klub", "Praha", null, LocalTime.of(16, 0));
+        return new CalendarGigDraft("uid", "Fest", date, showTime, "Klub", "Praha", null, null, null,
+                LocalTime.of(16, 0));
     }
 
     private static CatalogMatch match(CalendarGigDraft draft, CalendarEventStatus status, boolean removed, GigId link) {

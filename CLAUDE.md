@@ -193,6 +193,22 @@ as the slot) — the page offers
 Update / Cancel / Delete / Keep, always a user click through the catalog use cases (so the
 platforms follow via the outbox); nothing is changed automatically.
 
+## Places (towns)
+
+Town names repeat (three Hranice, two Czech villages and a Slovak city called Košice), and
+both platforms got it wrong with only a name. So a gig's `Location` carries an optional
+`Address` (street, postal code, district "okres Přerov", region, the town's coordinates —
+V9), filled when the town is picked from the place search: `PlaceSearch` →
+`PhotonPlaceSearch` (OpenStreetMap Photon, free, no key; CZ/SK towns; its `county` is the
+district as Bandzone writes it). The gig form's City is a town picker (typed towns still
+allowed, flagged "not picked from the list"); the calendar pre-fill picks the town when
+exactly one fits name + country + postal area (`TownChoice`).
+- **Bandzone** has its own town list: `BandzoneTowns` picks the suggestion with the same name,
+  country and district — several fits or none → a clear permanent error, never a guess.
+- **Bandsintown** geocodes the uploaded text: rows carry street and postal code; after a
+  publish the event's coordinates are compared with the town's (> 25 km → the task's note
+  says "check the place there").
+
 ## Bandzone (Selenium)
 
 `BandzoneGigProvider`/`BandzoneGigImporter` scrape read-only. Writes drive the
@@ -279,7 +295,7 @@ H2 file DB at `./data/bzscraper-gigs` (`bzscraper.db.path`). The schema is owned
 **Flyway** (`src/main/resources/db/migration/V<n>__*.sql`); Hibernate runs with
 `ddl-auto=validate`, so every entity change needs a new migration (tests run the
 migrations on an in-memory H2 and fail on a mismatch). A pre-Flyway database is
-baselined at V1. V3 re-keys venue-less gigs (and their publications) to the `@city` identity; V4 adds the band-calendar tables (`calendar_rule`, `calendar_decision`); V5 the sync outbox (`sync_task`, `sync_log`); V6 the saved calendar copy and event → gig links (`calendar_event`, `calendar_link`); V7 the band's slot (`gig.slot_start/slot_end`); V8 a workflow run's step (`sync_task.step`). The H2 version is pinned in `pom.xml` (`h2.version`) because its file
+baselined at V1. V3 re-keys venue-less gigs (and their publications) to the `@city` identity; V4 adds the band-calendar tables (`calendar_rule`, `calendar_decision`); V5 the sync outbox (`sync_task`, `sync_log`); V6 the saved calendar copy and event → gig links (`calendar_event`, `calendar_link`); V7 the band's slot (`gig.slot_start/slot_end`); V8 a workflow run's step (`sync_task.step`); V9 the gig's address (`gig.street/postal_code/district/region/latitude/longitude`). The H2 version is pinned in `pom.xml` (`h2.version`) because its file
 format changes between versions. `H2ScriptBackup` writes a plain-SQL `SCRIPT` backup on
 every start to `./data/backups` (one per day, newest 14 kept); restore with
 `org.h2.tools.RunScript`.

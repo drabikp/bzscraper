@@ -58,15 +58,22 @@ public interface BitSession extends AutoCloseable {
         }
     }
 
-    /** Outcome of creating one gig: its event id when published, otherwise the reason. */
-    record Created(Gig gig, String eventId, String error) {
+    /**
+     * Outcome of creating one gig: its event id when published (with a {@code note} worth
+     * showing, e.g. Bandsintown placed it far from the town), otherwise the reason.
+     */
+    record Created(Gig gig, String eventId, String error, String note) {
 
         public static Created published(Gig gig, String eventId) {
-            return new Created(gig, eventId, null);
+            return new Created(gig, eventId, null, null);
+        }
+
+        public static Created published(Gig gig, String eventId, String note) {
+            return new Created(gig, eventId, null, note);
         }
 
         public static Created failed(Gig gig, String error) {
-            return new Created(gig, null, error);
+            return new Created(gig, null, error, null);
         }
 
         public boolean isPublished() {

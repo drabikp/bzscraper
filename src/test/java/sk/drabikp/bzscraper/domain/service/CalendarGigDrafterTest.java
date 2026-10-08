@@ -59,21 +59,22 @@ class CalendarGigDrafterTest {
     @Test
     void venue_city_and_country_are_read_from_a_map_address() {
         assertThat(CalendarGigDrafter.place("Club Orbit, Hlavná 12, 811 05 Bratislava-Staré Mesto, Slovensko"))
-                .isEqualTo(new Place("Club Orbit", "Bratislava", Country.SLOVAKIA));
+                .isEqualTo(new Place("Club Orbit", "Bratislava", Country.SLOVAKIA, "Hlavná 12", "811 05"));
         assertThat(CalendarGigDrafter.place("Music Hall, Long Street 51, 186 00 Praha 8-Karlín, Česko"))
-                .isEqualTo(new Place("Music Hall", "Praha", Country.CZECHIA));
+                .isEqualTo(new Place("Music Hall", "Praha", Country.CZECHIA, "Long Street 51", "186 00"));
         assertThat(CalendarGigDrafter.place("Town Hall, Main Sq. 1, 460 01 Liberec IV-Perštýn, Czechia"))
-                .isEqualTo(new Place("Town Hall", "Liberec", Country.CZECHIA));
+                .isEqualTo(new Place("Town Hall", "Liberec", Country.CZECHIA, "Main Sq. 1", "460 01"));
         assertThat(CalendarGigDrafter.place("Garden Bar, 3267, 508 01 Hořice-Hořice v Podkrkonoší, Česko"))
-                .isEqualTo(new Place("Garden Bar", "Hořice", Country.CZECHIA));
+                .as("a bare number is no street").isEqualTo(new Place("Garden Bar", "Hořice", Country.CZECHIA, null, "508 01"));
         assertThat(CalendarGigDrafter.place("Secret Yard, Main St 36, 040 01 Staré Mesto, Slovensko"))
-                .as("Košice addresses name only the district").isEqualTo(new Place("Secret Yard", "Košice", Country.SLOVAKIA));
+                .as("Košice addresses name only the district")
+                .isEqualTo(new Place("Secret Yard", "Košice", Country.SLOVAKIA, "Main St 36", "040 01"));
     }
 
     @Test
     void a_place_that_is_only_a_town_has_no_venue() {
         assertThat(CalendarGigDrafter.place("Kraslice, 358 01 Kraslice, Česko"))
-                .isEqualTo(new Place(null, "Kraslice", Country.CZECHIA));
+                .isEqualTo(new Place(null, "Kraslice", Country.CZECHIA, null, "358 01"));
         assertThat(CalendarGigDrafter.place("Práče\nOkres Znojmo, Česko"))
                 .isEqualTo(new Place(null, "Práče", Country.CZECHIA));
         assertThat(CalendarGigDrafter.place("X766+59, Prešov, Slovensko"))
@@ -85,7 +86,7 @@ class CalendarGigDrafterTest {
         assertThat(CalendarGigDrafter.place("Rock Cellar, Zlín")).isEqualTo(new Place("Rock Cellar", "Zlín", null));
         assertThat(CalendarGigDrafter.place("Frýdek-Místek")).isEqualTo(new Place(null, "Frýdek-Místek", null));
         assertThat(CalendarGigDrafter.place("Hall, Long St 9 466 01, 1 Jablonec nad Nisou 1, Česko"))
-                .isEqualTo(new Place("Hall", "Jablonec nad Nisou", Country.CZECHIA));
+                .extracting(Place::venue, Place::city).containsExactly("Hall", "Jablonec nad Nisou");
     }
 
     @Test

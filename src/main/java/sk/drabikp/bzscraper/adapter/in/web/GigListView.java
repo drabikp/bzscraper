@@ -29,6 +29,7 @@ import com.vaadin.flow.theme.lumo.LumoUtility;
 import sk.drabikp.bzscraper.application.port.in.CancelGigUseCase;
 import sk.drabikp.bzscraper.application.port.in.DeleteGigUseCase;
 import sk.drabikp.bzscraper.application.port.in.ExportGigsAsCsvUseCase;
+import sk.drabikp.bzscraper.application.port.in.FindPlacesUseCase;
 import sk.drabikp.bzscraper.application.port.in.ListGigsUseCase;
 import sk.drabikp.bzscraper.application.port.in.ListPublicationsUseCase;
 import sk.drabikp.bzscraper.application.port.in.PublishGigsUseCase;
@@ -81,6 +82,7 @@ public class GigListView extends VerticalLayout {
     private final ResyncGigUseCase resyncGig;
     private final SyncLogUseCase syncLog;
     private final SyncBroadcaster broadcaster;
+    private final FindPlacesUseCase places;
 
     private final Grid<Gig> grid = new Grid<>();
     private final Div syncSummary = new Div();
@@ -93,7 +95,8 @@ public class GigListView extends VerticalLayout {
                        DeleteGigUseCase deleteGig, UpdateGigUseCase updateGig,
                        CancelGigUseCase cancelGig, PublishGigsUseCase publishGigs,
                        ResyncGigUseCase resyncGig, SyncLogUseCase syncLog, SyncBroadcaster broadcaster,
-                       ExportGigsAsCsvUseCase exportCsv) {
+                       ExportGigsAsCsvUseCase exportCsv, FindPlacesUseCase places) {
+        this.places = places;
         this.listGigs = listGigs;
         this.listPublications = listPublications;
         this.deleteGig = deleteGig;
@@ -320,7 +323,7 @@ public class GigListView extends VerticalLayout {
             Notification.show(BUSY, 4000, Notification.Position.MIDDLE);
             return;
         }
-        GigForm form = new GigForm();
+        GigForm form = new GigForm(places);
         form.populate(gig);
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle("Edit gig");

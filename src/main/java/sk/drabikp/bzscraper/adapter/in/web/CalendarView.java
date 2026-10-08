@@ -28,6 +28,7 @@ import org.springframework.core.task.TaskExecutor;
 import sk.drabikp.bzscraper.application.port.in.CalendarCatalogUseCase;
 import sk.drabikp.bzscraper.application.port.in.CancelGigUseCase;
 import sk.drabikp.bzscraper.application.port.in.DeleteGigUseCase;
+import sk.drabikp.bzscraper.application.port.in.FindPlacesUseCase;
 import sk.drabikp.bzscraper.application.port.in.ReviewCalendarUseCase;
 import sk.drabikp.bzscraper.application.port.in.SyncLogUseCase;
 import sk.drabikp.bzscraper.application.port.in.UpdateGigUseCase;
@@ -90,6 +91,7 @@ public class CalendarView extends VerticalLayout {
     private final CancelGigUseCase cancelGig;
     private final DeleteGigUseCase deleteGig;
     private final SyncLogUseCase syncLog;
+    private final FindPlacesUseCase places;
     private final TaskExecutor taskExecutor;
 
     private final Div summary = new Div();
@@ -104,13 +106,14 @@ public class CalendarView extends VerticalLayout {
 
     public CalendarView(ReviewCalendarUseCase review, CalendarCatalogUseCase calendarCatalog, UpdateGigUseCase updateGig,
                         CancelGigUseCase cancelGig, DeleteGigUseCase deleteGig, SyncLogUseCase syncLog,
-                        TaskExecutor taskExecutor) {
+                        FindPlacesUseCase places, TaskExecutor taskExecutor) {
         this.review = review;
         this.calendarCatalog = calendarCatalog;
         this.updateGig = updateGig;
         this.cancelGig = cancelGig;
         this.deleteGig = deleteGig;
         this.syncLog = syncLog;
+        this.places = places;
         this.taskExecutor = taskExecutor;
 
         setSizeFull();
@@ -301,7 +304,7 @@ public class CalendarView extends VerticalLayout {
     }
 
     private void openAddDialog(CalendarRow r) {
-        GigForm form = new GigForm();
+        GigForm form = new GigForm(places);
         form.prefill(r.draft());
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle("Add to catalog");
@@ -363,7 +366,7 @@ public class CalendarView extends VerticalLayout {
         if (busy(gig)) {
             return;
         }
-        GigForm form = new GigForm();
+        GigForm form = new GigForm(places);
         form.populate(gig);
         form.applyShow(r.draft().date(), r.draft().showTime(), r.match().has(Kind.DATE));
         Dialog dialog = new Dialog();

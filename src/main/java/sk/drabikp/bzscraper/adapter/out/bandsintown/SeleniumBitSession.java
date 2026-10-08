@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import sk.drabikp.bzscraper.application.port.out.BitSession;
 import sk.drabikp.bzscraper.application.port.out.BitUploadException;
+import sk.drabikp.bzscraper.domain.model.Address;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.ImportedGig;
 
@@ -22,6 +23,7 @@ import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Locale;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -170,18 +172,19 @@ final class SeleniumBitSession implements BitSession {
             clickOk();                              // every row matched an existing event
         }
 
-        Map<String, String> statuses = statuses(batch);
+        Map<String, Map<String, Object>> listed = listed(batch);
         List<Created> results = new ArrayList<>();
         for (int i = 0; i < batch.size(); i++) {
             Gig gig = batch.get(i);
             String id = drafts[i] != null ? drafts[i] : existing[i];
             if (id == null) {
                 results.add(Created.failed(gig, "Bandsintown rejected this row — " + BitResponses.describe(reply)));
-            } else if ("PUBLISHED".equals(statuses.get(id))) {
-                results.add(Created.published(gig, id));
+            } else if (listed.containsKey(id) && "PUBLISHED".equals(String.valueOf(listed.get(id).get("status")))) {
+                results.add(Created.published(gig, id, placeCheck(gig, listed.get(id))));
             } else {
+                Object status = listed.containsKey(id) ? listed.get(id).get("status") : "not listed";
                 results.add(Created.failed(gig, "Uploaded to Bandsintown as event " + id + ", but it is not "
-                        + "published (" + statuses.getOrDefault(id, "not listed") + ") — publish or delete it there."));
+                        + "published (" + status + ") — publish or delete it there."));
             }
         }
         return results;
@@ -531,22 +534,43 @@ final class SeleniumBitSession implements BitSession {
     }
 
     /**
-     * The status of each listed event: the upcoming list, plus the past list when the batch
-     * has gigs already played (published past events are listed there, not as upcoming).
+     * The listed events by id: the upcoming list, plus the past list when the batch has gigs
+     * already played (published past events are listed there, not as upcoming).
      */
-    private Map<String, String> statuses(List<Gig> batch) throws BitUploadException {
-        Map<String, String> statuses = new HashMap<>();
+    private Map<String, Map<String, Object>> listed(List<Gig> batch) throws BitUploadException {
+        Map<String, Map<String, Object>> events = new HashMap<>();
         for (Map<String, Object> event : upcomingEvents()) {
-            statuses.put(idOf(event), String.valueOf(event.get("status")));
+            events.put(idOf(event), event);
         }
         ZonedDateTime now = ZonedDateTime.now();
         if (batch.stream().anyMatch(gig -> gig.schedule().showStart().isBefore(now))) {
             pacer.pause();
             for (Map<String, Object> event : pastEvents()) {
-                statuses.putIfAbsent(idOf(event), String.valueOf(event.get("status")));
+                events.putIfAbsent(idOf(event), event);
             }
         }
-        return statuses;
+        return events;
+    }
+
+    /** How far from the gig's town Bandsintown may place it before the user is told to check. */
+    private static final double PLACE_TOLERANCE_KM = 25;
+
+    /**
+     * Bandsintown works out the place from the uploaded text and has picked the wrong one of
+     * same-named towns before: compares its coordinates with the town's (when the town was
+     * picked from the place search) — a note when they are far apart, else null.
+     */
+    static String placeCheck(Gig gig, Map<String, Object> event) {
+        Address address = gig.location().address();
+        if (address == null || !address.resolved()
+                || !(event.get("venue_latitude") instanceof Number lat)
+                || !(event.get("venue_longitude") instanceof Number lon)) {
+            return null;
+        }
+        double km = address.kilometresTo(lat.doubleValue(), lon.doubleValue());
+        return km <= PLACE_TOLERANCE_KM ? null : String.format(Locale.ROOT,
+                "Bandsintown placed it %.0f km from %s (%s) — check the place there", km,
+                gig.location().city(), address.district());
     }
 
     private void openEventsTab(String tab) {
