@@ -15,11 +15,11 @@ import sk.drabikp.bzscraper.application.port.out.GigImporter;
 import sk.drabikp.bzscraper.application.port.out.GigProvider;
 import sk.drabikp.bzscraper.application.port.out.GigPublisher;
 import sk.drabikp.bzscraper.application.port.out.GigRepository;
-import sk.drabikp.bzscraper.application.port.out.GigUpdater;
 import sk.drabikp.bzscraper.application.port.out.GigWithdrawer;
 import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.application.port.out.SyncNotifier;
 import sk.drabikp.bzscraper.application.port.out.SyncOutbox;
+import sk.drabikp.bzscraper.application.port.out.SyncStep;
 import sk.drabikp.bzscraper.application.port.out.SyncTrigger;
 import sk.drabikp.bzscraper.application.port.out.Transactions;
 import sk.drabikp.bzscraper.application.service.AdapterCapabilities;
@@ -35,6 +35,7 @@ import sk.drabikp.bzscraper.application.service.GigResyncService;
 import sk.drabikp.bzscraper.application.service.SyncDispatcher;
 import sk.drabikp.bzscraper.application.service.SyncLogService;
 import sk.drabikp.bzscraper.application.service.SyncRequests;
+import sk.drabikp.bzscraper.application.service.WorkflowEngine;
 import sk.drabikp.bzscraper.domain.model.BandProfile;
 import sk.drabikp.bzscraper.domain.model.PlatformSupport;
 
@@ -73,15 +74,23 @@ public class UseCaseConfiguration {
 
     /** What each platform can do with past events — declared by its adapters, never configured. */
     @Bean
-    PlatformSupport platformSupport(List<GigPublisher> publishers, List<GigUpdater> updaters,
-                                    List<GigWithdrawer> withdrawers) {
-        return AdapterCapabilities.of(publishers, updaters, withdrawers);
+    PlatformSupport platformSupport(List<GigPublisher> publishers, List<GigWithdrawer> withdrawers) {
+        return AdapterCapabilities.of(publishers, withdrawers);
+    }
+
+    /** Runs the workflow actions (update) through the platforms' steps — docs/sync-workflow-plan.md. */
+    @Bean
+    WorkflowEngine workflowEngine(List<SyncStep> steps, GigRepository gigRepository,
+                                  PublishedGigStore publishedGigStore, SyncOutbox outbox, Transactions transactions,
+                                  SyncNotifier notifier, Clock clock) {
+        return new WorkflowEngine(steps, gigRepository, publishedGigStore, outbox, transactions, notifier, clock);
     }
 
     @Bean
     SyncRequests syncRequests(SyncOutbox outbox, PublishedGigStore publishedGigStore, SyncTrigger trigger,
-                              SyncNotifier notifier, Clock clock, PlatformSupport platformSupport) {
-        return new SyncRequests(outbox, publishedGigStore, trigger, notifier, clock, platformSupport);
+                              SyncNotifier notifier, Clock clock, PlatformSupport platformSupport,
+                              WorkflowEngine workflowEngine) {
+        return new SyncRequests(outbox, publishedGigStore, trigger, notifier, clock, platformSupport, workflowEngine);
     }
 
     @Bean
@@ -109,11 +118,11 @@ public class UseCaseConfiguration {
     }
 
     @Bean
-    SyncDispatcher syncDispatcher(List<GigPublisher> publishers, List<GigUpdater> updaters,
-                                  List<GigWithdrawer> withdrawers, GigRepository gigRepository,
+    SyncDispatcher syncDispatcher(List<GigPublisher> publishers, List<GigWithdrawer> withdrawers,
+                                  WorkflowEngine workflowEngine, GigRepository gigRepository,
                                   PublishedGigStore publishedGigStore, SyncOutbox outbox, Transactions transactions,
                                   SyncNotifier notifier, Clock clock) {
-        return new SyncDispatcher(publishers, updaters, withdrawers, gigRepository, publishedGigStore, outbox,
+        return new SyncDispatcher(publishers, withdrawers, workflowEngine, gigRepository, publishedGigStore, outbox,
                 transactions, notifier, clock);
     }
 

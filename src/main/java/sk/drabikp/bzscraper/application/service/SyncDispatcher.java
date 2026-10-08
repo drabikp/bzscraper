@@ -3,8 +3,6 @@ package sk.drabikp.bzscraper.application.service;
 import sk.drabikp.bzscraper.application.port.in.DispatchSyncUseCase;
 import sk.drabikp.bzscraper.application.port.out.GigPublisher;
 import sk.drabikp.bzscraper.application.port.out.GigRepository;
-import sk.drabikp.bzscraper.application.port.out.GigUpdateException;
-import sk.drabikp.bzscraper.application.port.out.GigUpdater;
 import sk.drabikp.bzscraper.application.port.out.GigWithdrawalException;
 import sk.drabikp.bzscraper.application.port.out.GigWithdrawer;
 import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
@@ -32,7 +30,8 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Runs the sync outbox, one task at a time (the platforms are driven by a browser, one
+ * Runs the sync outbox, one task at a time; actions that have a workflow (update) are
+ * handed to the {@link WorkflowEngine}. Runs the rest of the outbox, one task at a time (the platforms are driven by a browser, one
  * at a time). Each task works from the state at the time it RUNS — the gig as the
  * catalog has it now, the platform id as recorded now — so whatever changed since it was
  * queued is what reaches the platform, and a task whose work became moot ends DONE with
@@ -46,7 +45,6 @@ import java.util.Optional;
 public class SyncDispatcher implements DispatchSyncUseCase {
 
     private final Map<Platform, GigPublisher> publishers = new EnumMap<>(Platform.class);
-    private final Map<Platform, GigUpdater> updaters = new EnumMap<>(Platform.class);
     private final Map<Platform, GigWithdrawer> withdrawers = new EnumMap<>(Platform.class);
     private final GigRepository gigRepository;
     private final PublishedGigStore publishedGigStore;
@@ -55,6 +53,7 @@ public class SyncDispatcher implements DispatchSyncUseCase {
     private final SyncNotifier notifier;
     private final Clock clock;
     private final PlatformSupport support;
+    private final WorkflowEngine engine;
 
     /** How one run of a task ended. {@code permanent}: waiting won't help, don't retry. */
     private record Outcome(boolean ok, String message, boolean permanent) {
@@ -73,11 +72,10 @@ public class SyncDispatcher implements DispatchSyncUseCase {
         }
     }
 
-    public SyncDispatcher(List<GigPublisher> publishers, List<GigUpdater> updaters, List<GigWithdrawer> withdrawers,
+    public SyncDispatcher(List<GigPublisher> publishers, List<GigWithdrawer> withdrawers, WorkflowEngine engine,
                           GigRepository gigRepository, PublishedGigStore publishedGigStore, SyncOutbox outbox,
                           Transactions transactions, SyncNotifier notifier, Clock clock) {
         publishers.forEach(p -> register(this.publishers, p.platform(), p, "GigPublisher"));
-        updaters.forEach(u -> register(this.updaters, u.platform(), u, "GigUpdater"));
         withdrawers.forEach(w -> register(this.withdrawers, w.platform(), w, "GigWithdrawer"));
         this.gigRepository = gigRepository;
         this.publishedGigStore = publishedGigStore;
@@ -85,7 +83,8 @@ public class SyncDispatcher implements DispatchSyncUseCase {
         this.transactions = transactions;
         this.notifier = notifier;
         this.clock = clock;
-        this.support = AdapterCapabilities.of(publishers, updaters, withdrawers);
+        this.support = AdapterCapabilities.of(publishers, withdrawers);
+        this.engine = engine;
     }
 
     private static <T> void register(Map<Platform, T> map, Platform platform, T strategy, String kind) {
@@ -101,7 +100,9 @@ public class SyncDispatcher implements DispatchSyncUseCase {
             return false;
         }
         SyncTask task = next.get();
-        if (task.action() == SyncAction.PUBLISH) {
+        if (engine.handles(task.action())) {
+            engine.runFrom(task);
+        } else if (task.action() == SyncAction.PUBLISH) {
             publishBatch(task.platform());
         } else {
             if (!start(task)) {
@@ -140,37 +141,12 @@ public class SyncDispatcher implements DispatchSyncUseCase {
 
     private Outcome run(SyncTask task) {
         return switch (task.action()) {
-            case UPDATE -> update(task);
+            case UPDATE -> throw new IllegalStateException("updates run as a workflow");
             case CANCEL -> withdraw(task, WithdrawAction.CANCEL);
             case DELETE -> withdraw(task, WithdrawAction.DELETE);
             case REACTIVATE -> reactivate(task);
             case PUBLISH -> throw new IllegalStateException("publishes run as a batch");
         };
-    }
-
-    private Outcome update(SyncTask task) {
-        if (!publishedGigStore.isPublished(task.platform(), task.gigId())) {
-            return Outcome.done("not published there — nothing to update");
-        }
-        Optional<Gig> gig = gigRepository.findById(task.gigId());
-        if (gig.isEmpty()) {
-            return Outcome.done("the gig is no longer in the catalog");
-        }
-        GigUpdater updater = updaters.get(task.platform());
-        Optional<String> ref = publishedGigStore.externalRef(task.platform(), task.gigId());
-        if (updater == null || ref.isEmpty()) {
-            return Outcome.permanent("Updating published gigs on " + SyncRequests.platformName(task.platform())
-                    + " is not supported — update it there by hand.");
-        }
-        if (!support.of(task.platform()).allows(SyncAction.UPDATE, gig.get(), clock)) {
-            return leftAsItIs(task);
-        }
-        try {
-            updater.update(ref.get(), gig.get());
-            return Outcome.done(null);
-        } catch (GigUpdateException e) {
-            return e.permanent() ? Outcome.permanent(e.getMessage()) : Outcome.failed(e.getMessage());
-        }
     }
 
     private Outcome withdraw(SyncTask task, WithdrawAction action) {

@@ -4,6 +4,7 @@ import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.ImportedGig;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * An authenticated Bandsintown artist-portal session. Events are addressed by their
@@ -25,6 +26,14 @@ public interface BitSession extends AutoCloseable {
     void updateEvent(String eventId, Gig gig) throws BitUploadException;
 
     /**
+     * Overwrites several published events in one upload (at most 25), keyed by event id in
+     * upload order. One result per event, in the same order; never throws for one event.
+     *
+     * @throws BitUploadException when the upload as a whole failed (nothing is known per event)
+     */
+    List<Edited> updateEvents(List<Map.Entry<String, Gig>> edits) throws BitUploadException;
+
+    /**
      * Removes the event from Bandsintown. {@code cancelled} gives "the event was
      * canceled" as the reason. An event that is already gone is not an error.
      */
@@ -36,6 +45,18 @@ public interface BitSession extends AutoCloseable {
     /** Releases the session (closes the browser). Never throws. */
     @Override
     void close();
+
+    /**
+     * Outcome of editing one event: {@code refusal} is Bandsintown's own "no" for that row
+     * ({@code INVALID_START_TIME}); {@code error} anything else (the row wasn't applied, or a
+     * new draft was made instead); both null when it was updated.
+     */
+    record Edited(String eventId, String refusal, String error) {
+
+        public boolean updated() {
+            return refusal == null && error == null;
+        }
+    }
 
     /** Outcome of creating one gig: its event id when published, otherwise the reason. */
     record Created(Gig gig, String eventId, String error) {

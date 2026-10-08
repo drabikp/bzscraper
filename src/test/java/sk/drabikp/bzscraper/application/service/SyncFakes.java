@@ -4,6 +4,7 @@ import sk.drabikp.bzscraper.application.port.out.GigRepository;
 import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.application.port.out.SyncNotifier;
 import sk.drabikp.bzscraper.application.port.out.SyncOutbox;
+import sk.drabikp.bzscraper.application.port.out.SyncStep;
 import sk.drabikp.bzscraper.application.port.out.SyncTrigger;
 import sk.drabikp.bzscraper.application.port.out.Transactions;
 import sk.drabikp.bzscraper.domain.model.DateRange;
@@ -11,6 +12,8 @@ import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.Platform;
 import sk.drabikp.bzscraper.domain.model.Publication;
+import sk.drabikp.bzscraper.domain.model.StepOutcome;
+import sk.drabikp.bzscraper.domain.model.StepType;
 import sk.drabikp.bzscraper.domain.model.SyncAction;
 import sk.drabikp.bzscraper.domain.model.SyncLogEntry;
 import sk.drabikp.bzscraper.domain.model.SyncStatus;
@@ -29,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /** In-memory stand-ins for the sync ports, behaving like the JPA adapters. */
@@ -54,7 +58,7 @@ final class SyncFakes {
         @Override
         public SyncTask enqueue(GigId gigId, String gigLabel, Platform platform, SyncAction action, Instant now) {
             SyncTask task = new SyncTask(nextId++, gigId, gigLabel, platform, action, SyncStatus.PENDING, 0, now, now,
-                    now, null);
+                    now, null, null);
             tasks.put(task.id(), task);
             write(task.id(), now, "queued");
             return task;
@@ -108,7 +112,7 @@ final class SyncFakes {
         public void move(GigId from, GigId to, String newLabel) {
             tasks.replaceAll((id, t) -> t.gigId().equals(from) ? new SyncTask(t.id(), to, newLabel, t.platform(),
                     t.action(), t.status(), t.attempts(), t.createdAt(), t.nextAttemptAt(), t.updatedAt(),
-                    t.message()) : t);
+                    t.message(), t.step()) : t);
         }
 
         @Override
@@ -153,6 +157,14 @@ final class SyncFakes {
         }
 
         @Override
+        public void advance(long id, StepType next, String why, Instant now) {
+            SyncTask t = tasks.get(id);
+            tasks.put(id, new SyncTask(id, t.gigId(), t.gigLabel(), t.platform(), t.action(), SyncStatus.PENDING, 0,
+                    t.createdAt(), now, now, t.message(), next));
+            write(id, now, why + " → " + next.label());
+        }
+
+        @Override
         public void requeue(long id, Instant now) {
             change(id, SyncStatus.PENDING, 0, now, null, now);
         }
@@ -169,7 +181,7 @@ final class SyncFakes {
         private void change(long id, SyncStatus status, int attempts, Instant next, String message, Instant now) {
             SyncTask t = tasks.get(id);
             tasks.put(id, new SyncTask(id, t.gigId(), t.gigLabel(), t.platform(), t.action(), status, attempts,
-                    t.createdAt(), next, now, message));
+                    t.createdAt(), next, now, message, t.step()));
             write(id, now, status + (message == null ? "" : ": " + message));
         }
 
@@ -309,6 +321,53 @@ final class SyncFakes {
         @Override
         public Instant instant() {
             return now;
+        }
+    }
+
+    /** A workflow step that records what it was given; refusal and outcome are set per test. */
+    static final class Step implements SyncStep {
+
+        private final Platform platform;
+        private final StepType type;
+        private final int batchSize;
+        Function<Gig, Optional<String>> refusal = gig -> Optional.empty();
+        Function<Item, StepOutcome> outcome = item -> StepOutcome.done(null);
+        final List<List<Item>> calls = new ArrayList<>();
+
+        Step(Platform platform, StepType type, int batchSize) {
+            this.platform = platform;
+            this.type = type;
+            this.batchSize = batchSize;
+        }
+
+        @Override
+        public Platform platform() {
+            return platform;
+        }
+
+        @Override
+        public StepType type() {
+            return type;
+        }
+
+        @Override
+        public int batchSize() {
+            return batchSize;
+        }
+
+        @Override
+        public Optional<String> refusal(Gig gig) {
+            return refusal.apply(gig);
+        }
+
+        @Override
+        public List<StepOutcome> run(List<Item> items) {
+            calls.add(List.copyOf(items));
+            return items.stream().map(outcome).toList();
+        }
+
+        List<Item> ran() {
+            return calls.stream().flatMap(List::stream).toList();
         }
     }
 }

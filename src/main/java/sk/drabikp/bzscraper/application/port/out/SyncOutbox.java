@@ -2,6 +2,7 @@ package sk.drabikp.bzscraper.application.port.out;
 
 import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.Platform;
+import sk.drabikp.bzscraper.domain.model.StepType;
 import sk.drabikp.bzscraper.domain.model.SyncAction;
 import sk.drabikp.bzscraper.domain.model.SyncLogEntry;
 import sk.drabikp.bzscraper.domain.model.SyncTask;
@@ -63,6 +64,9 @@ public interface SyncOutbox {
     void markRetry(long id, String error, Instant nextAttempt, Instant now);
 
     void markFailed(long id, String error, Instant now);
+
+    /** A workflow run moves on to {@code next}: PENDING, due now, logging {@code why}. */
+    void advance(long id, StepType next, String why, Instant now);
 
     /** The user's retry of a FAILED or DISCARDED task: PENDING now, attempts counted afresh. */
     void requeue(long id, Instant now);

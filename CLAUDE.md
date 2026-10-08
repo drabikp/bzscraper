@@ -48,7 +48,7 @@ Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
     `SyncLogUseCase`, `DispatchSyncUseCase`,
     `ImportGigsUseCase`, `ReviewCalendarUseCase`, `CalendarCatalogUseCase`, legacy scrape/CSV use cases.
   - `port/out/` — `GigRepository`, `PublishedGigStore`, `Transactions`, per-platform strategies
-    `GigPublisher` / `GigUpdater` / `GigWithdrawer` / `GigImporter`,
+    `GigPublisher` / `GigWithdrawer` / `GigImporter`, workflow steps `SyncStep`,
     `BandzonePortalClient` + `BandzoneSession`, `BitPortalClient` + `BitSession`,
     `CalendarFeed`, `BandProfileStore`, `CalendarDecisionStore`, `CalendarSnapshotStore`,
     `CalendarLinkStore`, `SyncOutbox`, `SyncTrigger`,
@@ -68,11 +68,11 @@ Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
   `JpaCalendarDecisionStore`, `SpringTransactions`, `H2ScriptBackup`); `calendar/`
   (`IcsCalendarFeed` + `IcsParser`, `ProfileFile` rule format);
   `bandzone/` (scrape provider + importer, Selenium
-  `SeleniumBandzonePortalClient`, `BandzoneLineupPage`, `BandzoneGigUpdater`,
+  `SeleniumBandzonePortalClient`, `BandzoneLineupPage`, `BandzoneFormEdit` (step),
   `BandzoneGigWithdrawer`, `StubBandzonePortalClient`); `csv/` (`OpenCsvGigExporter`, the
   manual-import download); `bandsintown/` (`BandsintownCsv` format, Selenium
   `SeleniumBitPortalClient` + `SeleniumBitSession`, `HumanPacer`, `Totp`,
-  `BandsintownGigUpdater`, `BandsintownGigWithdrawer`, `StubBitPortalClient`).
+  `BandsintownBulkEdit` (step), `BandsintownGigWithdrawer`, `StubBitPortalClient`).
 - **config/** — `UseCaseConfiguration` wires POJO services as `@Bean`s; `BandProfileSync`
   loads the shipped + band calendar rules on start.
 
@@ -89,6 +89,15 @@ to a gig that is on a platform, and every Publish, writes its platform work as r
 TRANSACTION as the catalog change (`SyncRequests`, called by `GigCatalogService`,
 `GigPublishingService`, `GigResyncService`). The UI never waits for a platform.
 
+**Workflows** (`docs/sync-workflow-plan.md`): an action with a workflow (`Workflows`: today
+UPDATE = bulk edit → form edit → by hand) runs in the `WorkflowEngine`, not as one adapter
+call. Platforms implement `SyncStep`s (`BandsintownBulkEdit` — 25 rows, no past events;
+`BandzoneFormEdit` — one at a time); what a platform can do is which steps it has.
+A step's `refusal(gig)` passes the gig on (also asked at queue time → "left out"); outcomes:
+done / refused (→ next step, repeatable actions only) / failed (retry at the same step) /
+failed for good (→ user). The run's current step is `sync_task.step`; the path is logged
+("bulk edit: … → form edit"); due runs at one step go together (batch, or ≤10 one by one).
+
 `SyncWorker` (one background thread, woken on enqueue + every `bzscraper.sync.poll-seconds`)
 calls `SyncDispatcher.runNext()` until nothing is due — one task at a time:
 
@@ -96,7 +105,7 @@ calls `SyncDispatcher.runNext()` until nothing is due — one task at a time:
 PUBLISH     a platform's due publishes run as ONE batch (one browser session);
             record the platform id per PUBLISHED gig (with DONE, one transaction);
             skipped (DONE + note) if the gig was deleted/cancelled/published meanwhile
-UPDATE      GigUpdater.update(ref, gig as it is NOW) — later edits ride along
+UPDATE      a workflow (above): the steps get the gig as it is NOW — later edits ride along
 CANCEL      GigWithdrawer.withdraw(ref, CANCEL)
 DELETE      GigWithdrawer.withdraw(ref, DELETE) → forget the record (with DONE)
 REACTIVATE  delete the cancelled copy → forget → publishNew → record the new id
@@ -118,9 +127,8 @@ REACTIVATE  delete the cancelled copy → forget → publishNew → record the n
   a new publish the failed publish, a new update the failed update, a delete the failed
   updates/cancels (never a failed publish — it may have created the event; the user checks).
 - **What a platform can do with PAST gigs** is declared by its adapters, never configured
-  (`GigPublisher.publishesPastEvents`, `GigUpdater.updatesPastEvents`,
-  `GigWithdrawer.withdrawsPastEvents` → `AdapterCapabilities` → `PlatformSupport`;
-  Bandsintown: publish only). Interim — the workflow engine replaces it
+  (`GigPublisher.publishesPastEvents`, `GigWithdrawer.withdrawsPastEvents` →
+  `AdapterCapabilities` → `PlatformSupport`; Bandsintown: publish only; edits: by its steps). Interim — the workflow engine replaces it
   (`docs/sync-workflow-plan.md`). Work a platform doesn't take is never tried: left out
   at queue time (shown as "Left out: … do it there by hand"; a delete forgets the record), and
   a task queued before the gig was over ends DONE "left as it is" when it runs. "Past" = the
@@ -271,7 +279,7 @@ H2 file DB at `./data/bzscraper-gigs` (`bzscraper.db.path`). The schema is owned
 **Flyway** (`src/main/resources/db/migration/V<n>__*.sql`); Hibernate runs with
 `ddl-auto=validate`, so every entity change needs a new migration (tests run the
 migrations on an in-memory H2 and fail on a mismatch). A pre-Flyway database is
-baselined at V1. V3 re-keys venue-less gigs (and their publications) to the `@city` identity; V4 adds the band-calendar tables (`calendar_rule`, `calendar_decision`); V5 the sync outbox (`sync_task`, `sync_log`); V6 the saved calendar copy and event → gig links (`calendar_event`, `calendar_link`); V7 the band's slot (`gig.slot_start/slot_end`). The H2 version is pinned in `pom.xml` (`h2.version`) because its file
+baselined at V1. V3 re-keys venue-less gigs (and their publications) to the `@city` identity; V4 adds the band-calendar tables (`calendar_rule`, `calendar_decision`); V5 the sync outbox (`sync_task`, `sync_log`); V6 the saved calendar copy and event → gig links (`calendar_event`, `calendar_link`); V7 the band's slot (`gig.slot_start/slot_end`); V8 a workflow run's step (`sync_task.step`). The H2 version is pinned in `pom.xml` (`h2.version`) because its file
 format changes between versions. `H2ScriptBackup` writes a plain-SQL `SCRIPT` backup on
 every start to `./data/backups` (one per day, newest 14 kept); restore with
 `org.h2.tools.RunScript`.

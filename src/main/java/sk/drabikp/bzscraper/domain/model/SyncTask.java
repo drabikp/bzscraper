@@ -7,11 +7,12 @@ import java.time.Instant;
  * catalog. Written in the same transaction as the catalog change that needs it, run
  * later by the dispatcher. {@code gigLabel} keeps the gig readable in the log after the
  * gig itself is gone. {@code nextAttemptAt} is when a PENDING task may run;
- * {@code message} is the latest outcome or error.
+ * {@code message} is the latest outcome or error. {@code step} is where a workflow run
+ * stands (null: not started, or an action that has no workflow yet).
  */
 public record SyncTask(long id, GigId gigId, String gigLabel, Platform platform, SyncAction action,
                        SyncStatus status, int attempts, Instant createdAt, Instant nextAttemptAt,
-                       Instant updatedAt, String message) {
+                       Instant updatedAt, String message, StepType step) {
 
     /** How a gig is named in the sync log: "2026-09-18 · Eufory + Snaefell, Hranice". */
     public static String labelOf(Gig gig) {

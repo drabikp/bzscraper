@@ -24,9 +24,11 @@ final class SyncLabels {
 
     /** Short state of one task: "↻ deleting…", "⏳ update queued", "⏳ update — retry at 10:42", "✗ publish failed". */
     static String state(SyncTask task) {
-        String verb = task.action().verb();
+        String verb = task.action().verb() + (task.step() != null && task.status() != SyncStatus.DONE
+                ? " (" + task.step().label() + ")" : "");
         return switch (task.status()) {
-            case RUNNING -> "↻ " + ing(task.action()) + "…";
+            case RUNNING -> "↻ " + ing(task.action()) + (task.step() != null ? " (" + task.step().label() + ")" : "")
+                    + "…";
             case PENDING -> task.retrying()
                     ? "⏳ " + verb + " — retry at " + time(task.nextAttemptAt())
                     : "⏳ " + verb + " queued";

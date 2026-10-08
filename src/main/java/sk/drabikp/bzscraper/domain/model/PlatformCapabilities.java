@@ -10,15 +10,15 @@ import java.time.ZonedDateTime;
  * them, and its cancel is a removal. Work a platform doesn't take is not even tried — the
  * user is told to do it there by hand.
  */
-public record PlatformCapabilities(boolean publishPast, boolean editPast, boolean cancelPast, boolean removePast) {
+public record PlatformCapabilities(boolean publishPast, boolean cancelPast, boolean removePast) {
 
-    public static final PlatformCapabilities ALL = new PlatformCapabilities(true, true, true, true);
+    public static final PlatformCapabilities ALL = new PlatformCapabilities(true, true, true);
 
     /** Whether the platform takes {@code action} on a gig that is already over. */
     public boolean allowsPast(SyncAction action) {
         return switch (action) {
             case PUBLISH -> publishPast;
-            case UPDATE -> editPast;
+            case UPDATE -> true;                            // a workflow: its steps decide
             case CANCEL -> cancelPast;
             case DELETE -> removePast;
             case REACTIVATE -> removePast && publishPast;   // the cancelled copy goes, a new one comes

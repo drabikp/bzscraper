@@ -94,8 +94,11 @@ The outbox tables stay; a run gets "current step" + "next check" columns.
 ## Order of work
 
 1. Read-only check: does Bandsintown's edit form open (and allow changes) for a past event?
-2. Engine core + the **update** workflow; Bandzone and Bandsintown moved onto it; the edit
-   form as a Bandsintown fallback if step 1 says it works.
+2. **Done (2026-10-08):** engine core (`WorkflowEngine`, `SyncStep`, `sync_task.step`) + the
+   **update** workflow; Bandzone (form edit) and Bandsintown (bulk edit) on it. The edit form
+   as a Bandsintown fallback waits for step 1. Not yet: a session shared by a platform's
+   steps in one pass (each step opens its own; the saved login keeps that cheap), "waiting"
+   and "needs you" outcomes, a Stop button.
 3. Publish (with read-back), cancel, delete, reactivate moved onto it.
 4. Backlog: Songkick (venue lookup + "needs you", bulk add for future dates, add/edit forms,
    approval wait, locked events → email).

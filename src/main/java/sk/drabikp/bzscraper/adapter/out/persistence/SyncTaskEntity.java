@@ -6,6 +6,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import sk.drabikp.bzscraper.domain.model.Platform;
+import sk.drabikp.bzscraper.domain.model.StepType;
 import sk.drabikp.bzscraper.domain.model.SyncAction;
 import sk.drabikp.bzscraper.domain.model.SyncStatus;
 import sk.drabikp.bzscraper.domain.model.SyncTask;
@@ -32,6 +33,7 @@ public class SyncTaskEntity {
     private Instant nextAttemptAt;
     private Instant updatedAt;
     private String message;
+    private String step;
 
     protected SyncTaskEntity() {
         // for JPA
@@ -52,7 +54,7 @@ public class SyncTaskEntity {
     SyncTask toTask() {
         return new SyncTask(id, GigEntityMapper.deserializeId(gigId), gigLabel, Platform.valueOf(platform),
                 SyncAction.valueOf(action), SyncStatus.valueOf(status), attempts, createdAt, nextAttemptAt,
-                updatedAt, message);
+                updatedAt, message, step == null ? null : StepType.valueOf(step));
     }
 
     Long getId() {
@@ -76,6 +78,15 @@ public class SyncTaskEntity {
         this.status = newStatus.name();
         this.nextAttemptAt = nextAttempt;
         this.message = clip(newMessage, TEXT_MAX);
+        this.updatedAt = now;
+    }
+
+    /** On to another step of the workflow: due now, attempts counted afresh for it. */
+    void advance(StepType next, Instant now) {
+        this.step = next.name();
+        this.status = SyncStatus.PENDING.name();
+        this.nextAttemptAt = now;
+        this.attempts = 0;
         this.updatedAt = now;
     }
 

@@ -6,6 +6,7 @@ import org.springframework.transaction.annotation.Transactional;
 import sk.drabikp.bzscraper.application.port.out.SyncOutbox;
 import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.Platform;
+import sk.drabikp.bzscraper.domain.model.StepType;
 import sk.drabikp.bzscraper.domain.model.SyncAction;
 import sk.drabikp.bzscraper.domain.model.SyncLogEntry;
 import sk.drabikp.bzscraper.domain.model.SyncStatus;
@@ -157,6 +158,13 @@ public class JpaSyncOutbox implements SyncOutbox {
         SyncTaskEntity task = get(id);
         task.change(SyncStatus.FAILED, null, error, now);
         write(task, now, "failed: " + error + " — waiting for you to Retry or Discard");
+    }
+
+    @Override
+    public void advance(long id, StepType next, String why, Instant now) {
+        SyncTaskEntity task = get(id);
+        task.advance(next, now);
+        write(task, now, why + " → " + next.label());
     }
 
     @Override

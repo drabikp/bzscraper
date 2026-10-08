@@ -71,6 +71,26 @@ final class BitResponses {
                 .toList();
     }
 
+    /** The row errors by gig index (row 2 = gig 0); null where a row has none. */
+    static String[] rowErrorsByIndex(Map<String, Object> entry, int gigCount) {
+        String[] errors = new String[gigCount];
+        Map<String, Object> json = json(entry);
+        if (json == null || !(json.get("error") instanceof Map<?, ?> error)
+                || !(error.get("message") instanceof List<?> rows)) {
+            return errors;
+        }
+        for (Object row : rows) {
+            if (row instanceof Map<?, ?> r && r.get("error") != null) {
+                int index = (int) number(r.get("row")) - FIRST_DATA_ROW;
+                if (index >= 0 && index < gigCount) {
+                    errors[index] = errors[index] == null ? String.valueOf(r.get("error"))
+                            : errors[index] + ", " + r.get("error");
+                }
+            }
+        }
+        return errors;
+    }
+
     static String describe(Map<String, Object> entry) {
         if (entry == null) {
             return "no reply";

@@ -18,6 +18,7 @@ import java.time.Clock;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -51,15 +52,23 @@ public class SyncRequests {
     private final SyncNotifier notifier;
     private final Clock clock;
     private final PlatformSupport support;
+    private final SyncAdmission admission;
 
     public SyncRequests(SyncOutbox outbox, PublishedGigStore publishedGigStore, SyncTrigger trigger,
-                        SyncNotifier notifier, Clock clock, PlatformSupport support) {
+                        SyncNotifier notifier, Clock clock, PlatformSupport support, SyncAdmission admission) {
         this.outbox = outbox;
         this.publishedGigStore = publishedGigStore;
         this.trigger = trigger;
         this.notifier = notifier;
         this.clock = clock;
         this.support = support;
+        this.admission = admission;
+    }
+
+    /** Workflow actions are all admitted (tests). */
+    public SyncRequests(SyncOutbox outbox, PublishedGigStore publishedGigStore, SyncTrigger trigger,
+                        SyncNotifier notifier, Clock clock, PlatformSupport support) {
+        this(outbox, publishedGigStore, trigger, notifier, clock, support, SyncAdmission.ALL);
     }
 
     /** Every platform can do everything (tests). */
@@ -176,8 +185,16 @@ public class SyncRequests {
         return new QueueResult(queued, leftOut);
     }
 
-    /** Whether the platform takes the action on this gig; if not, says why in {@code leftOut}. */
+    /**
+     * Whether the platform takes the action on this gig — for a workflow action, whether one
+     * of its steps does; if not, says why in {@code leftOut}.
+     */
     private boolean allowed(Gig gig, Platform platform, SyncAction action, List<String> leftOut) {
+        Optional<String> noStep = admission.leftOut(platform, action, gig);
+        if (noStep.isPresent()) {
+            leftOut.add(gig.title() + ": " + noStep.get());
+            return false;
+        }
         if (support.of(platform).allows(action, gig, clock)) {
             return true;
         }

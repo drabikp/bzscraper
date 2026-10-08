@@ -3,11 +3,13 @@ package sk.drabikp.bzscraper.application.service;
 import org.junit.jupiter.api.Test;
 import sk.drabikp.bzscraper.TestGigs;
 import sk.drabikp.bzscraper.application.port.out.GigPublisher;
-import sk.drabikp.bzscraper.application.port.out.GigUpdater;
+import sk.drabikp.bzscraper.application.port.out.SyncStep;
 import sk.drabikp.bzscraper.application.port.out.GigWithdrawer;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.Platform;
+import sk.drabikp.bzscraper.domain.model.PlatformCapabilities;
 import sk.drabikp.bzscraper.domain.model.PlatformSupport;
+import sk.drabikp.bzscraper.domain.model.StepType;
 import sk.drabikp.bzscraper.domain.model.QueueResult;
 import sk.drabikp.bzscraper.domain.model.SyncAction;
 import sk.drabikp.bzscraper.domain.model.SyncStatus;
@@ -16,14 +18,13 @@ import sk.drabikp.bzscraper.domain.model.SyncTask;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.Mockito.mock;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static sk.drabikp.bzscraper.domain.model.Platform.BANDSINTOWN;
 import static sk.drabikp.bzscraper.domain.model.Platform.BANDZONE;
@@ -36,8 +37,10 @@ class SyncRequestsTest {
     private final SyncFakes.Gigs gigs = new SyncFakes.Gigs();
     private final SyncFakes.Signals signals = new SyncFakes.Signals();
     private final SyncFakes.MutableClock clock = new SyncFakes.MutableClock();        // 2026-10-08
-    private final GigUpdater bzUpdater = adapter(GigUpdater.class, BANDZONE);
-    private final GigUpdater bitUpdater = adapter(GigUpdater.class, BANDSINTOWN);
+    /** Bandsintown edits by bulk upload, which doesn't take past events; Bandzone by form, everything. */
+    private final SyncFakes.Step bitBulkEdit = new SyncFakes.Step(BANDSINTOWN, StepType.BULK_EDIT, 25);
+    private final SyncFakes.Step bzFormEdit = new SyncFakes.Step(BANDZONE, StepType.FORM_EDIT, 1);
+    private final WorkflowEngine engine;
     private final GigWithdrawer bzWithdrawer = adapter(GigWithdrawer.class, BANDZONE);
     private final GigWithdrawer bitWithdrawer = adapter(GigWithdrawer.class, BANDSINTOWN);
     private final GigPublisher bzPublisher = adapter(GigPublisher.class, BANDZONE);
@@ -49,13 +52,15 @@ class SyncRequestsTest {
     private final GigPublishingService publishing;
 
     SyncRequestsTest() {
-        when(bzUpdater.updatesPastEvents()).thenReturn(true);
+        bitBulkEdit.refusal = gig -> PlatformCapabilities.isPast(gig, clock)
+                ? Optional.of("doesn't take past events") : Optional.empty();
+        engine = new WorkflowEngine(List.of(bitBulkEdit, bzFormEdit), gigs, published, outbox,
+                new SyncFakes.DirectTransactions(), signals, clock);
         when(bzWithdrawer.withdrawsPastEvents(any())).thenReturn(true);
         when(bzPublisher.publishesPastEvents()).thenReturn(true);
         when(bitPublisher.publishesPastEvents()).thenReturn(true);
-        support = AdapterCapabilities.of(List.of(bzPublisher, bitPublisher), List.of(bzUpdater, bitUpdater),
-                List.of(bzWithdrawer, bitWithdrawer));
-        requests = new SyncRequests(outbox, published, signals, signals, clock, support);
+        support = AdapterCapabilities.of(List.of(bzPublisher, bitPublisher), List.of(bzWithdrawer, bitWithdrawer));
+        requests = new SyncRequests(outbox, published, signals, signals, clock, support, engine);
         catalog = new GigCatalogService(gigs, published, new CalendarFakes.Links(), new SyncFakes.DirectTransactions(),
                 requests);
         publishing = new GigPublishingService(requests, new SyncFakes.DirectTransactions());
@@ -63,9 +68,7 @@ class SyncRequestsTest {
 
     private static <T> T adapter(Class<T> type, Platform platform) {
         T adapter = mock(type);
-        if (adapter instanceof GigUpdater u) {
-            when(u.platform()).thenReturn(platform);
-        } else if (adapter instanceof GigWithdrawer w) {
+        if (adapter instanceof GigWithdrawer w) {
             when(w.platform()).thenReturn(platform);
         } else if (adapter instanceof GigPublisher p) {
             when(p.platform()).thenReturn(platform);
@@ -107,13 +110,14 @@ class SyncRequestsTest {
     }
 
     @Test
-    void an_edit_of_a_past_gig_is_not_tried_where_the_platform_refuses_past_edits() {
+    void an_edit_no_step_of_the_platform_takes_is_not_queued_and_says_why() {
         QueueResult pastEdit = catalog.update(past.id(), renamed(past));
         QueueResult upcomingEdit = catalog.update(upcoming.id(), renamed(upcoming));
 
         assertThat(pastEdit.queued()).extracting(SyncTask::platform).containsExactly(BANDZONE);
         assertThat(pastEdit.notQueued()).singleElement().asString()
-                .contains("Bandsintown", "doesn't take changes to past events");
+                .contains("Summer Fest", "Bandsintown", "by hand", "bulk edit: doesn't take past events",
+                        "form edit: none for Bandsintown");
         assertThat(upcomingEdit.queued()).extracting(SyncTask::platform).containsExactly(BANDZONE, BANDSINTOWN);
     }
 
@@ -131,13 +135,13 @@ class SyncRequestsTest {
     }
 
     @Test
-    void a_task_queued_before_the_gig_was_over_is_not_tried_when_it_runs() throws Exception {
+    void an_edit_queued_before_the_gig_was_over_waits_for_the_user_without_being_tried() {
         SyncRequests everything = new SyncRequests(outbox, published, signals, signals, clock);
         SyncTask update = new GigCatalogService(gigs, published, new CalendarFakes.Links(),
                 new SyncFakes.DirectTransactions(), everything).update(past.id(), renamed(past)).queued().stream()
                 .filter(t -> t.platform() == BANDSINTOWN).findFirst().orElseThrow();
         SyncDispatcher dispatcher = new SyncDispatcher(List.of(bzPublisher, bitPublisher),
-                List.of(bzUpdater, bitUpdater), List.of(bzWithdrawer, bitWithdrawer), gigs, published, outbox,
+                List.of(bzWithdrawer, bitWithdrawer), engine, gigs, published, outbox,
                 new SyncFakes.DirectTransactions(), signals, clock);
 
         while (dispatcher.runNext()) {
@@ -145,9 +149,10 @@ class SyncRequestsTest {
         }
 
         assertThat(outbox.find(update.id())).get().satisfies(t -> {
-            assertThat(t.status()).isEqualTo(SyncStatus.DONE);
-            assertThat(t.message()).contains("left as it is", "Bandsintown");
+            assertThat(t.status()).isEqualTo(SyncStatus.FAILED);
+            assertThat(t.message()).contains("by hand", "doesn't take past events");
         });
-        verify(bitUpdater, never()).update(any(), any());
+        assertThat(bitBulkEdit.calls).isEmpty();
+        assertThat(bzFormEdit.ran()).extracting(SyncStep.Item::externalRef).containsExactly("bz-Summer Fest");
     }
 }

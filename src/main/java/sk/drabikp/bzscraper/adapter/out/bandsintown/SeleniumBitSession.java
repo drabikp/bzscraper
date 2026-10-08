@@ -248,6 +248,55 @@ final class SeleniumBitSession implements BitSession {
         clickOk();
     }
 
+    @Override
+    public List<Edited> updateEvents(List<Map.Entry<String, Gig>> edits) throws BitUploadException {
+        try {
+            return updates(edits);
+        } catch (BitUploadException e) {
+            SeleniumBitPortalClient.saveScreenshot(driver, "update");
+            throw e;
+        } catch (RuntimeException e) {
+            SeleniumBitPortalClient.saveScreenshot(driver, "update");
+            throw new BitUploadException("Bandsintown upload failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * One upload of rows WITH event ids. Each row is judged on its own: updated (its id in
+     * {@code updated_events}), refused (Bandsintown's row error), or not applied — a reply
+     * with errors may hold back the other rows too, so those simply try again.
+     */
+    private List<Edited> updates(List<Map.Entry<String, Gig>> edits) throws BitUploadException {
+        Map<String, Gig> ordered = new LinkedHashMap<>();
+        edits.forEach(edit -> ordered.put(edit.getKey(), edit.getValue()));
+        Map<String, Object> reply = upload(BandsintownCsv.updates(ordered, artistName));
+        int rows = edits.size();
+        String[] updated = BitResponses.updatedIds(reply, rows);
+        String[] drafts = BitResponses.draftIds(reply, rows);
+        String[] refused = BitResponses.rowErrorsByIndex(reply, rows);
+        if (!BitResponses.ok(reply) && Arrays.stream(refused).allMatch(Objects::isNull)) {
+            throw new BitUploadException("Bandsintown rejected the upload — " + BitResponses.describe(reply));
+        }
+        List<Edited> results = new ArrayList<>();
+        for (int i = 0; i < rows; i++) {
+            String eventId = edits.get(i).getKey();
+            if (drafts[i] != null) {
+                results.add(new Edited(eventId, null, "Bandsintown made a new draft " + drafts[i]
+                        + " instead of editing event " + eventId + " — delete that draft there"));
+            } else if (refused[i] != null) {
+                results.add(new Edited(eventId, refused[i], null));
+            } else if (eventId.equals(updated[i])) {
+                results.add(new Edited(eventId, null, null));
+            } else {
+                results.add(new Edited(eventId, null, "not applied — " + BitResponses.describe(reply)));
+            }
+        }
+        if (BitResponses.ok(reply)) {
+            clickOk();
+        }
+        return results;
+    }
+
     // --- delete ---
 
     @Override

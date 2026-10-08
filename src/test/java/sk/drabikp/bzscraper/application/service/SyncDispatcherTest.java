@@ -3,8 +3,6 @@ package sk.drabikp.bzscraper.application.service;
 import org.junit.jupiter.api.Test;
 import sk.drabikp.bzscraper.TestGigs;
 import sk.drabikp.bzscraper.application.port.out.GigPublisher;
-import sk.drabikp.bzscraper.application.port.out.GigUpdateException;
-import sk.drabikp.bzscraper.application.port.out.GigUpdater;
 import sk.drabikp.bzscraper.application.port.out.GigWithdrawalException;
 import sk.drabikp.bzscraper.application.port.out.GigWithdrawer;
 import sk.drabikp.bzscraper.domain.model.Gig;
@@ -15,7 +13,6 @@ import sk.drabikp.bzscraper.domain.model.SyncStatus;
 import sk.drabikp.bzscraper.domain.model.SyncTask;
 import sk.drabikp.bzscraper.domain.model.WithdrawAction;
 
-import java.time.Duration;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
@@ -43,7 +40,6 @@ class SyncDispatcherTest {
     private final SyncFakes.MutableClock clock = new SyncFakes.MutableClock();
 
     private final GigPublisher bzPublisher = mock(GigPublisher.class);
-    private final GigUpdater bzUpdater = mock(GigUpdater.class);
     private final GigWithdrawer bzWithdrawer = mock(GigWithdrawer.class);
     private final GigWithdrawer bitWithdrawer = mock(GigWithdrawer.class);
 
@@ -53,19 +49,22 @@ class SyncDispatcherTest {
 
     SyncDispatcherTest() {
         when(bzPublisher.platform()).thenReturn(BANDZONE);
-        when(bzUpdater.platform()).thenReturn(BANDZONE);
         when(bzWithdrawer.platform()).thenReturn(BANDZONE);
         when(bitWithdrawer.platform()).thenReturn(BANDSINTOWN);
         // these gigs are in the past (clock: 2026-10-08); past-event rules are tested in SyncRequestsTest
         when(bzPublisher.publishesPastEvents()).thenReturn(true);
-        when(bzUpdater.updatesPastEvents()).thenReturn(true);
         when(bzWithdrawer.withdrawsPastEvents(any())).thenReturn(true);
         when(bitWithdrawer.withdrawsPastEvents(any())).thenReturn(true);
     }
 
     private SyncDispatcher dispatcher() {
-        return new SyncDispatcher(List.of(bzPublisher), List.of(bzUpdater), List.of(bzWithdrawer, bitWithdrawer),
-                gigs, published, outbox, new SyncFakes.DirectTransactions(), signals, clock);
+        return new SyncDispatcher(List.of(bzPublisher), List.of(bzWithdrawer, bitWithdrawer), noSteps(), gigs,
+                published, outbox, new SyncFakes.DirectTransactions(), signals, clock);
+    }
+
+    private WorkflowEngine noSteps() {
+        return new WorkflowEngine(List.of(), gigs, published, outbox, new SyncFakes.DirectTransactions(), signals,
+                clock);
     }
 
     private SyncTask queue(Gig g, Platform platform, SyncAction action) {
@@ -76,76 +75,17 @@ class SyncDispatcherTest {
         return outbox.get(task.id());
     }
 
-    // --- update ---
-
-    @Test
-    void an_update_pushes_the_gigs_details_as_they_are_when_it_runs() throws Exception {
-        gigs.save(gig);
-        published.record(BANDZONE, gig.id(), "100");
-        SyncTask task = queue(gig, BANDZONE, SyncAction.UPDATE);
-        Gig renamedSince = new Gig("Fest 2026", gig.schedule(), gig.location(), gig.lineup(), gig.admission(),
-                null, null, null, null, false);
-        gigs.save(renamedSince);
-
-        assertThat(dispatcher().runNext()).isTrue();
-
-        verify(bzUpdater).update("100", renamedSince);
-        assertThat(after(task).status()).isEqualTo(SyncStatus.DONE);
-        assertThat(after(task).attempts()).isEqualTo(1);
-        assertThat(signals.changes).isPositive();
-        assertThat(dispatcher().runNext()).isFalse();
-    }
-
-    @Test
-    void a_failing_update_is_retried_after_1_5_and_15_minutes_then_left_for_the_user() throws Exception {
-        gigs.save(gig);
-        published.record(BANDZONE, gig.id(), "100");
-        doThrow(new GigUpdateException("timeout")).when(bzUpdater).update(any(), any());
-        SyncTask task = queue(gig, BANDZONE, SyncAction.UPDATE);
-        SyncDispatcher dispatcher = dispatcher();
-
-        dispatcher.runNext();
-        assertThat(after(task).status()).isEqualTo(SyncStatus.PENDING);
-        assertThat(after(task).nextAttemptAt()).isEqualTo(clock.instant().plus(Duration.ofMinutes(1)));
-        assertThat(dispatcher.runNext()).as("not due yet").isFalse();
-
-        for (int minutes : new int[]{1, 5, 15}) {
-            clock.advance(Duration.ofMinutes(minutes));
-            assertThat(dispatcher.runNext()).isTrue();
-        }
-
-        assertThat(after(task).status()).isEqualTo(SyncStatus.FAILED);
-        assertThat(after(task).attempts()).isEqualTo(4);
-        assertThat(after(task).message()).isEqualTo("timeout");
-        verify(bzUpdater, times(4)).update("100", gig);
-    }
-
-    @Test
-    void a_platform_that_cannot_update_fails_at_once_without_retrying() {
-        gigs.save(gig);
-        published.record(BANDSINTOWN, gig.id(), "900");
-        SyncTask task = queue(gig, BANDSINTOWN, SyncAction.UPDATE);
-
-        dispatcher().runNext();
-
-        assertThat(after(task).status()).isEqualTo(SyncStatus.FAILED);
-        assertThat(after(task).message()).contains("update it there by hand");
-    }
+    // updates run as a workflow: see WorkflowEngineTest
 
     @Test
     void work_that_became_moot_ends_done_with_a_note() throws Exception {
         gigs.save(gig);
-        SyncTask update = queue(gig, BANDZONE, SyncAction.UPDATE);
         SyncTask cancel = queue(gig, BANDZONE, SyncAction.CANCEL);
 
         dispatcher().runNext();
-        dispatcher().runNext();
 
-        assertThat(after(update).status()).isEqualTo(SyncStatus.DONE);
-        assertThat(after(update).message()).isEqualTo("not published there — nothing to update");
         assertThat(after(cancel).status()).isEqualTo(SyncStatus.DONE);
         assertThat(after(cancel).message()).isEqualTo("not on the platform");
-        verify(bzUpdater, never()).update(any(), any());
         verify(bzWithdrawer, never()).withdraw(any(), any());
     }
 
@@ -346,27 +286,20 @@ class SyncDispatcherTest {
         GigWithdrawer second = mock(GigWithdrawer.class);
         when(second.platform()).thenReturn(BANDZONE);
 
-        assertThatThrownBy(() -> new SyncDispatcher(List.of(), List.of(), List.of(bzWithdrawer, second), gigs,
+        assertThatThrownBy(() -> new SyncDispatcher(List.of(), List.of(bzWithdrawer, second), noSteps(), gigs,
                 published, outbox, new SyncFakes.DirectTransactions(), signals, clock))
                 .isInstanceOf(IllegalStateException.class);
     }
 
     @Test
     void a_refusal_by_the_platform_is_not_retried() throws Exception {
-        gigs.save(gig);
-        published.record(BANDZONE, gig.id(), "100");
         published.record(BANDSINTOWN, gig.id(), "900");
-        doThrow(new GigUpdateException("refused: INVALID_START_TIME", null, true)).when(bzUpdater).update(any(), any());
         doThrow(new GigWithdrawalException("switched off", null, true)).when(bitWithdrawer).withdraw(any(), any());
-        SyncTask update = queue(gig, BANDZONE, SyncAction.UPDATE);
         SyncTask delete = queue(gig, BANDSINTOWN, SyncAction.DELETE);
 
         dispatcher().runNext();
-        dispatcher().runNext();
 
-        assertThat(List.of(after(update), after(delete))).allSatisfy(t -> {
-            assertThat(t.status()).isEqualTo(SyncStatus.FAILED);
-            assertThat(t.attempts()).isEqualTo(1);
-        });
+        assertThat(after(delete).status()).isEqualTo(SyncStatus.FAILED);
+        assertThat(after(delete).attempts()).isEqualTo(1);
     }
 }
