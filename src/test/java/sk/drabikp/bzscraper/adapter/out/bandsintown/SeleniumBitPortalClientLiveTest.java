@@ -52,6 +52,7 @@ class SeleniumBitPortalClientLiveTest {
                 env("BIT_CHROMIUM", "/usr/bin/chromium"),
                 env("BIT_CHROMEDRIVER", "/usr/bin/chromedriver"),
                 env("BIT_PROFILE", ""),
+                env("BIT_PASSWORD_STORE", "auto"),
                 600, 1500);
 
         Gig gig = new Gig("BZSCRAPER TEST - please ignore",

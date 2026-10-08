@@ -17,6 +17,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import sk.drabikp.bzscraper.adapter.out.browser.BrowserProfile;
 import sk.drabikp.bzscraper.application.port.out.BitPortalClient;
 import sk.drabikp.bzscraper.application.port.out.BitSession;
 import sk.drabikp.bzscraper.application.port.out.BitUploadException;
@@ -83,6 +84,7 @@ public class SeleniumBitPortalClient implements BitPortalClient {
     private final String chromiumBinary;
     private final String chromedriverPath;
     private final String profileDir;
+    private final String passwordStore;
     private final HumanPacer pacer;
     /** One browser at a time: a person has one tab open, and the profile can't be shared. */
     private final Semaphore oneBrowser = new Semaphore(1);
@@ -100,6 +102,7 @@ public class SeleniumBitPortalClient implements BitPortalClient {
             @Value("${bzscraper.bandsintown.selenium.chromedriver:${bzscraper.bandzone.selenium.chromedriver:}}")
             String chromedriverPath,
             @Value("${bzscraper.bandsintown.selenium.profile-dir:}") String profileDir,
+            @Value("${bzscraper.browser.password-store:auto}") String passwordStore,
             @Value("${bzscraper.bandsintown.pacing.min-ms:900}") long minPauseMs,
             @Value("${bzscraper.bandsintown.pacing.max-ms:2600}") long maxPauseMs) {
         this.baseUrl = baseUrl;
@@ -114,6 +117,7 @@ public class SeleniumBitPortalClient implements BitPortalClient {
         this.profileDir = profileDir.isBlank()
                 ? Paths.get(System.getProperty("user.home"), ".bzscraper", "bandsintown-browser").toString()
                 : profileDir;
+        this.passwordStore = passwordStore;
         this.pacer = new HumanPacer(minPauseMs, maxPauseMs);
     }
 
@@ -162,6 +166,12 @@ public class SeleniumBitPortalClient implements BitPortalClient {
         options.addArguments("--no-sandbox", "--disable-dev-shm-usage", "--window-size=1366,900",
                 "--lang=en-US", "--disable-blink-features=AutomationControlled",
                 "--user-data-dir=" + profileDir);
+        options.addArguments(BrowserProfile.secretStoreArgs(passwordStore));
+        try {
+            BrowserProfile.ensurePrivate(Paths.get(profileDir));
+        } catch (IOException e) {
+            throw new IllegalStateException("Cannot create the Bandsintown browser profile " + profileDir, e);
+        }
         options.setExperimentalOption("excludeSwitches", List.of("enable-automation"));
         options.setExperimentalOption("prefs", Map.of("intl.accept_languages", "en-US,en"));
         if (!chromiumBinary.isBlank()) {

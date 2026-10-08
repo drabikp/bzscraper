@@ -49,7 +49,9 @@ class SeleniumBandzonePortalClientLiveTest {
                 env("BZ_SLUG", ""),
                 Boolean.parseBoolean(env("BZ_HEADLESS", "true")),
                 env("BZ_CHROMIUM", "/usr/bin/chromium"),
-                env("BZ_CHROMEDRIVER", "/usr/bin/chromedriver"));
+                env("BZ_CHROMEDRIVER", "/usr/bin/chromedriver"),
+                env("BZ_PROFILE", ""),
+                env("BZ_PASSWORD_STORE", "auto"));
         String lineupBand = env("BZ_LINEUP_BAND", "");
         boolean keep = Boolean.parseBoolean(env("BZ_KEEP", "false"));
 

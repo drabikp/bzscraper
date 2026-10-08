@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import sk.drabikp.bzscraper.adapter.out.browser.BrowserProfile;
 import sk.drabikp.bzscraper.application.port.out.BandzonePortalClient;
 import sk.drabikp.bzscraper.application.port.out.BandzoneSession;
 import sk.drabikp.bzscraper.application.port.out.BandzoneUploadException;
@@ -35,6 +36,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -45,6 +48,10 @@ import java.util.regex.Pattern;
  * and cancels/deletes it through the update delete tab. Active only
  * when {@code bzscraper.bandzone.selenium.enabled=true} (otherwise the stub is
  * used, so the app boots without a browser). Credentials come from config.
+ *
+ * The browser keeps a saved login in a private, per-account profile (see
+ * {@link BrowserProfile}): the password is used only when Bandzone ended that login.
+ * One browser at a time — a profile can't be opened twice.
  *
  * Field values are set via JavaScript (with input/change events) rather than
  * sendKeys, because Bandzone's date/city inputs are JS-wrapped and not directly
@@ -64,6 +71,9 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
     private final boolean headless;
     private final String chromiumBinary;
     private final String chromedriverPath;
+    private final Path profileDir;
+    private final String passwordStore;
+    private final Semaphore oneBrowser = new Semaphore(1);
 
     public SeleniumBandzonePortalClient(
             @Value("${bzscraper.bandzone.base-url:https://bandzone.cz}") String baseUrl,
@@ -72,7 +82,9 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
             @Value("${bzscraper.bandzone.band-slug:}") String bandSlug,
             @Value("${bzscraper.bandzone.selenium.headless:true}") boolean headless,
             @Value("${bzscraper.bandzone.selenium.chromium-binary:}") String chromiumBinary,
-            @Value("${bzscraper.bandzone.selenium.chromedriver:}") String chromedriverPath) {
+            @Value("${bzscraper.bandzone.selenium.chromedriver:}") String chromedriverPath,
+            @Value("${bzscraper.bandzone.selenium.profile-dir:}") String profileDir,
+            @Value("${bzscraper.browser.password-store:auto}") String passwordStore) {
         this.baseUrl = baseUrl;
         this.userLogin = userLogin;
         this.userSecret = userSecret;
@@ -80,6 +92,8 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
         this.headless = headless;
         this.chromiumBinary = chromiumBinary;
         this.chromedriverPath = chromedriverPath;
+        this.profileDir = BrowserProfile.dir(profileDir, "bandzone", userLogin);
+        this.passwordStore = passwordStore;
     }
 
     @Override
@@ -88,19 +102,45 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
             throw new BandzoneUploadException("Bandzone credentials/band-slug not configured "
                     + "(bzscraper.bandzone.login/password/band-slug).");
         }
-        WebDriver driver = newDriver();
+        acquireBrowser();
+        WebDriver driver = null;
         try {
+            driver = newDriver();
             WebDriverWait wait = new WebDriverWait(driver, WAIT);
-            logIn(driver, wait);
+            if (loggedIn(driver)) {
+                logger.info("Bandzone: reusing the saved login");
+            } else {
+                logIn(driver, wait);
+            }
             dismissCookies(driver);
-            return new SeleniumBandzoneSession(driver, wait, baseUrl, bandSlug);
-        } catch (BandzoneUploadException e) {
-            driver.quit();
-            throw e;
-        } catch (RuntimeException e) {
-            driver.quit();
+            return new SeleniumBandzoneSession(driver, wait, baseUrl, bandSlug, oneBrowser::release);
+        } catch (BandzoneUploadException | RuntimeException e) {
+            if (driver != null) {
+                driver.quit();
+            }
+            oneBrowser.release();
+            if (e instanceof BandzoneUploadException bz) {
+                throw bz;
+            }
             throw new BandzoneUploadException("Bandzone login failed: " + e.getMessage(), e);
         }
+    }
+
+    private void acquireBrowser() throws BandzoneUploadException {
+        try {
+            if (!oneBrowser.tryAcquire(10, TimeUnit.MINUTES)) {
+                throw new BandzoneUploadException("Another Bandzone operation is still running — try again later.");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BandzoneUploadException("Interrupted while waiting for the Bandzone browser.", e);
+        }
+    }
+
+    /** A still-valid saved login shows the logout link on any page. */
+    private boolean loggedIn(WebDriver driver) {
+        driver.get(baseUrl + "/");
+        return !driver.findElements(By.cssSelector("a[href*='logout']")).isEmpty();
     }
 
     private WebDriver newDriver() {
@@ -108,7 +148,14 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
         if (headless) {
             options.addArguments("--headless=new");
         }
-        options.addArguments("--no-sandbox", "--disable-dev-shm-usage", "--window-size=1280,1024");
+        try {
+            BrowserProfile.ensurePrivate(profileDir);
+        } catch (IOException e) {
+            throw new IllegalStateException("Cannot create the Bandzone browser profile " + profileDir, e);
+        }
+        options.addArguments("--no-sandbox", "--disable-dev-shm-usage", "--window-size=1280,1024",
+                "--user-data-dir=" + profileDir);
+        options.addArguments(BrowserProfile.secretStoreArgs(passwordStore));
         if (!chromiumBinary.isBlank()) {
             options.setBinary(chromiumBinary);
         }
@@ -162,13 +209,16 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
         private final WebDriverWait wait;
         private final String baseUrl;
         private final String bandSlug;
+        private final Runnable onClose;
         private String ownBandName; // read once per session from the band's profile
 
-        SeleniumBandzoneSession(WebDriver driver, WebDriverWait wait, String baseUrl, String bandSlug) {
+        SeleniumBandzoneSession(WebDriver driver, WebDriverWait wait, String baseUrl, String bandSlug,
+                                Runnable onClose) {
             this.driver = driver;
             this.wait = wait;
             this.baseUrl = baseUrl;
             this.bandSlug = bandSlug;
+            this.onClose = onClose;
         }
 
         @Override
@@ -291,7 +341,11 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
 
         @Override
         public void close() {
-            driver.quit();
+            try {
+                driver.quit();
+            } finally {
+                onClose.run();
+            }
         }
 
         private void openWizard() {

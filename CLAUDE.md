@@ -161,7 +161,20 @@ bzscraper.bandzone.selenium.enabled=true
 bzscraper.bandzone.login / .password / .band-slug     # NEVER hardcode in source
 bzscraper.bandzone.selenium.chromium-binary=/usr/bin/chromium
 bzscraper.bandzone.selenium.chromedriver=/usr/bin/chromedriver
+bzscraper.bandzone.selenium.profile-dir              # default ~/.bzscraper/bandzone-browser/<account hash>
 ```
+
+The real band's login lives in the git-ignored `.bz-creds` (line 1 login, line 2 password,
+`chmod 600`); `.bz-test-creds` is the test band.
+
+**Saved logins** (`BrowserProfile`, both platforms): the browser keeps the platform's login
+in a profile directory that is private (`700`), one per Bandzone account (a test account can
+never act as the real band), with cookies encrypted by the desktop keyring
+(`bzscraper.browser.password-store=auto`, default: the keyring when a desktop session bus
+is reachable, else Chromium's own store — on a server the private directory, owned by the
+service user on an encrypted volume, is the protection). A still-valid saved login is
+reused; the password (and the Bandsintown authenticator code) is used only when the
+platform ended it. Deleting the profile directory logs out.
 
 - **Create** — 2-step wizard: date/time/city → (optional "similar concerts" screen,
   answered "new") → info (name, entry, description, Facebook) → redirect to

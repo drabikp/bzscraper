@@ -53,6 +53,8 @@ Thumbs.db
 
 # local test credentials (never commit)
 .bz-test-creds
+# the band's real Bandzone login (line 1 login, line 2 password)
+.bz-creds
 .gstack/
 
 ### App data / index (never commit) ###
