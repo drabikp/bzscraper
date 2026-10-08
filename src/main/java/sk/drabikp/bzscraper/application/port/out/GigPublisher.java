@@ -25,4 +25,7 @@ public interface GigPublisher {
      * each tagged with {@link #platform()} and status PUBLISHED or FAILED.
      */
     List<PublishResult> publishNew(List<Gig> gigs);
+
+    /** Whether the platform takes gigs that are already over (e.g. for the band's history). */
+    boolean publishesPastEvents();
 }

@@ -13,6 +13,8 @@ import sk.drabikp.bzscraper.application.port.out.SyncOutbox;
 import sk.drabikp.bzscraper.application.port.out.Transactions;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.Platform;
+import sk.drabikp.bzscraper.domain.model.PlatformCapabilities;
+import sk.drabikp.bzscraper.domain.model.PlatformSupport;
 import sk.drabikp.bzscraper.domain.model.PublishResult;
 import sk.drabikp.bzscraper.domain.model.PublishStatus;
 import sk.drabikp.bzscraper.domain.model.SyncAction;
@@ -52,6 +54,7 @@ public class SyncDispatcher implements DispatchSyncUseCase {
     private final Transactions transactions;
     private final SyncNotifier notifier;
     private final Clock clock;
+    private final PlatformSupport support;
 
     /** How one run of a task ended. {@code permanent}: waiting won't help, don't retry. */
     private record Outcome(boolean ok, String message, boolean permanent) {
@@ -82,6 +85,7 @@ public class SyncDispatcher implements DispatchSyncUseCase {
         this.transactions = transactions;
         this.notifier = notifier;
         this.clock = clock;
+        this.support = AdapterCapabilities.of(publishers, updaters, withdrawers);
     }
 
     private static <T> void register(Map<Platform, T> map, Platform platform, T strategy, String kind) {
@@ -158,6 +162,9 @@ public class SyncDispatcher implements DispatchSyncUseCase {
             return Outcome.permanent("Updating published gigs on " + SyncRequests.platformName(task.platform())
                     + " is not supported — update it there by hand.");
         }
+        if (!support.of(task.platform()).allows(SyncAction.UPDATE, gig.get(), clock)) {
+            return leftAsItIs(task);
+        }
         try {
             updater.update(ref.get(), gig.get());
             return Outcome.done(null);
@@ -177,12 +184,22 @@ public class SyncDispatcher implements DispatchSyncUseCase {
             return Outcome.permanent("Removing gigs on " + SyncRequests.platformName(task.platform())
                     + " is not supported — remove it there by hand.");
         }
+        Optional<Gig> gig = gigRepository.findById(task.gigId());
+        if (gig.isPresent() && !support.of(task.platform()).allows(task.action(), gig.get(), clock)) {
+            return leftAsItIs(task);
+        }
         try {
             withdrawer.withdraw(ref.get(), action);
             return Outcome.done(null);
         } catch (GigWithdrawalException e) {
             return e.permanent() ? Outcome.permanent(e.getMessage()) : Outcome.failed(e.getMessage());
         }
+    }
+
+    /** The platform's adapter doesn't take this on a past gig: nothing is tried; the user is told. */
+    private Outcome leftAsItIs(SyncTask task) {
+        return Outcome.done("left as it is: " + PlatformCapabilities.leftOut(
+                SyncRequests.platformName(task.platform()), task.action()));
     }
 
     /** Bandzone can't un-cancel, so the cancelled copy is deleted and the gig published again. */
@@ -201,6 +218,9 @@ public class SyncDispatcher implements DispatchSyncUseCase {
         if (withdrawer == null || publisher == null || oldRef.isEmpty()) {
             return Outcome.permanent("Reactivating gigs on " + SyncRequests.platformName(platform)
                     + " is not supported — reactivate it there by hand.");
+        }
+        if (!support.of(platform).allows(SyncAction.REACTIVATE, gig.get(), clock)) {
+            return leftAsItIs(task);
         }
         // Delete first: Bandzone would otherwise list two copies of the same gig.
         try {

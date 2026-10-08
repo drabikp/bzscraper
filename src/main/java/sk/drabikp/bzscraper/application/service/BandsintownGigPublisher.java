@@ -26,6 +26,12 @@ public class BandsintownGigPublisher implements GigPublisher {
         this.notifyFollowers = notifyFollowers;
     }
 
+    /** Published past events are listed under Past Events. */
+    @Override
+    public boolean publishesPastEvents() {
+        return true;
+    }
+
     @Override
     public Platform platform() {
         return Platform.BANDSINTOWN;

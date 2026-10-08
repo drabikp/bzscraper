@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import sk.drabikp.bzscraper.domain.model.GigSummary;
 
+import java.time.LocalDate;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
@@ -21,6 +22,11 @@ class BandzoneHtmlParser {
 
     private GigSummary parseGig(Element element) {
         String url = parseUrlFromArticle(element);
+        ZonedDateTime start = parseStartDateTimeFromArticle(element);
+        ZonedDateTime end = parseEndDateTimeFromArticle(element);
+        if (start != null && end != null) {
+            end = plausibleEnd(start, end, LocalDate.now(end.getZone()));
+        }
 
         return GigSummary.GigSummaryBuilder.aGigSummary()
                 .setCity(parseCityFromArticle(element))
@@ -31,9 +37,23 @@ class BandzoneHtmlParser {
                 .setTitle(parseTitleFromArticle(element))
                 .setEntryFee(parseEntryFeeFromArticle(element))
                 .setIsCancelled(parseIsCancelled(element))
-                .setStart(parseStartDateTimeFromArticle(element))
-                .setEnd(parseEndDateTimeFromArticle(element))
+                .setStart(start)
+                .setEnd(end)
                 .build();
+    }
+
+    /**
+     * Bandzone renders an end given only as a time ("until 22:00") with TODAY's date — seen on
+     * a 2020 concert whose end came out six years later. An end on today's date, more than two
+     * weeks after a start that isn't today, is read as that time on the gig's own night.
+     */
+    static ZonedDateTime plausibleEnd(ZonedDateTime start, ZonedDateTime end, LocalDate today) {
+        if (!end.toLocalDate().equals(today) || start.toLocalDate().equals(today)
+                || !end.isAfter(start.plusDays(14))) {
+            return end;
+        }
+        ZonedDateTime sameNight = start.toLocalDate().atTime(end.toLocalTime()).atZone(end.getZone());
+        return sameNight.isBefore(start) ? sameNight.plusDays(1) : sameNight;
     }
 
     private String parseBzId(String url) {

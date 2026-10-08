@@ -28,7 +28,8 @@ Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
 - **domain/** — framework-free core.
   - `model/` — sync outbox types (`SyncTask`, `SyncAction`, `SyncStatus`, `SyncLogEntry`,
     `QueueResult`); `Gig` aggregate (immutable record; invariants in the compact
-    constructor) built from value objects `GigSchedule`, `Location`, `Admission`;
+    constructor) built from value objects `GigSchedule` (the whole event — a festival may
+    span days — plus the band's own optional `Slot`), `Location`, `Admission`;
     identified by `GigId` (start date + normalized venue, or `@` + city when the venue is
     unknown/"TBA" — it **changes** when an edit moves the date or venue). `CityName`
     compares city spellings across platforms (accents, "Prague" = "Praha", "Vsetín 1"). `Platform`, `PublishResult`/`PublishStatus`,
@@ -39,16 +40,18 @@ Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
     by `RuleKind`/`RuleOrigin`, `CalendarClassification`, `CalendarEventKind`/`Status`).
     `GigSummary` is the legacy scraped record.
   - `service/` — `ImportPlanner` (multi-platform import plan), `GigMerge`,
-    `CalendarEventClassifier`, `SyncRetryPolicy`, `GigDateFilter`, `GigSummaryToGigMapper`.
+    `CalendarEventClassifier`, `CalendarGigDrafter`, `CalendarChanges`, `CalendarCatalogMatcher`,
+    `SyncRetryPolicy`, `GigDateFilter`, `GigSummaryToGigMapper`.
 - **application/** — use cases and the ports they depend on.
   - `port/in/` — catalog (`SaveGig`, `ListGigs`, `UpdateGig`, `CancelGig`,
     `DeleteGig` — each returns what it queued), `PublishGigsUseCase`, `ResyncGigUseCase`,
     `SyncLogUseCase`, `DispatchSyncUseCase`,
-    `ImportGigsUseCase`, `ReviewCalendarUseCase`, legacy scrape/CSV use cases.
+    `ImportGigsUseCase`, `ReviewCalendarUseCase`, `CalendarCatalogUseCase`, legacy scrape/CSV use cases.
   - `port/out/` — `GigRepository`, `PublishedGigStore`, `Transactions`, per-platform strategies
     `GigPublisher` / `GigUpdater` / `GigWithdrawer` / `GigImporter`,
     `BandzonePortalClient` + `BandzoneSession`, `BitPortalClient` + `BitSession`,
-    `CalendarFeed`, `BandProfileStore`, `CalendarDecisionStore`, `SyncOutbox`, `SyncTrigger`,
+    `CalendarFeed`, `BandProfileStore`, `CalendarDecisionStore`, `CalendarSnapshotStore`,
+    `CalendarLinkStore`, `SyncOutbox`, `SyncTrigger`,
     `SyncNotifier`, exceptions.
   - `service/` — `GigCatalogService`, `GigPublishingService`, `GigResyncService` (these
     queue platform work via `SyncRequests`), `SyncDispatcher` (runs it), `SyncLogService`,
@@ -111,6 +114,17 @@ REACTIVATE  delete the cancelled copy → forget → publishNew → record the n
   per-row errors like `INVALID_START_TIME`, seen when editing a past event). After a
   restart, RUNNING repeatable tasks run again, others go FAILED ("check the platform"). FAILED waits for the user: Retry / Discard on
   `/sync` (`SyncLogView`). `markRunning` only starts a still-PENDING task.
+- A new task REPLACES the gig's FAILED tasks it redoes on that platform (`replaceFailed`):
+  a new publish the failed publish, a new update the failed update, a delete the failed
+  updates/cancels (never a failed publish — it may have created the event; the user checks).
+- **What a platform can do with PAST gigs** is declared by its adapters, never configured
+  (`GigPublisher.publishesPastEvents`, `GigUpdater.updatesPastEvents`,
+  `GigWithdrawer.withdrawsPastEvents` → `AdapterCapabilities` → `PlatformSupport`;
+  Bandsintown: publish only). Interim — the workflow engine replaces it
+  (`docs/sync-workflow-plan.md`). Work a platform doesn't take is never tried: left out
+  at queue time (shown as "Left out: … do it there by hand"; a delete forgets the record), and
+  a task queued before the gig was over ends DONE "left as it is" when it runs. "Past" = the
+  band's show day (`GigSchedule.showStart`) is before today.
 - UI: actions return a `QueueResult` (shown as "Queued: …"); the catalog's Platforms
   column and a summary line show queued/running/retrying/failed live (`SyncBroadcaster`
   → server push); actions on a gig whose task is RUNNING are blocked.
@@ -151,6 +165,26 @@ never in git) as USER rules. Format: `KIND weight value|alternatives`. Steps 2�
 (learning the profile from platform history, setup wizard for any band) are planned in
 `docs/calendar-plan.md`. Calendar notes hold fees/phones — never publish them.
 
+**Saved copy + changes**: each read is saved (`calendar_event`, `CalendarSnapshotStore`, notes
+included — local DB only) and compared with the last one (`CalendarChanges`): NEW / CHANGED
+(title, time, place, notes, status; plus what the rules said before, when the change made
+them say something else) / REMOVED / RETURNED, kept until the user marks them seen. The very
+first read is the baseline. The page shows the saved copy; "Read calendar" reads again.
+
+**Into the catalog**: `CalendarCatalogUseCase` (same `CalendarReviewService`).
+`CalendarGigDrafter` pre-fills the gig form from an event: show time from the
+`SHOWTIME_LABEL` rule kind (the event's own start is the arrival; a show before 06:00 is the
+next day), venue/city/country from the map-style place (`Venue, Street, 811 05
+City-District, Country`). The user checks and saves → gig + `calendar_link` (event → GigId,
+moved by `GigCatalogService.update` on an identity change). Unlinked gig events are matched
+to the catalog's gigs that day (link one, or bulk-link where there is exactly one).
+`CalendarCatalogMatcher` compares a LINKED upcoming gig with the calendar: another day,
+another show time, cancelled in the calendar, gone from the calendar (a multi-day event
+pairs on any of its days; the calendar's show is compared with the band's `Slot`, or offered
+as the slot) — the page offers
+Update / Cancel / Delete / Keep, always a user click through the catalog use cases (so the
+platforms follow via the outbox); nothing is changed automatically.
+
 ## Bandzone (Selenium)
 
 `BandzoneGigProvider`/`BandzoneGigImporter` scrape read-only. Writes drive the
@@ -189,8 +223,9 @@ platform ended it. Deleting the profile directory logs out.
 - **Lineup** (`BandzoneLineupPage`) — full sync: removes performers not in the lineup
   (never the band itself, whose name comes from the profile's `og:title`); adds an
   exact case-insensitive profile match, else a "band without profile" stub.
-- Not supported by Bandzone: un-cancel, removing a poster, ticket URL. Per-band set
-  times are not modeled.
+- Not supported by Bandzone: un-cancel, removing a poster, ticket URL, per-band set times
+  (Bandzone gets the whole event; the band's `Slot` goes to Bandsintown only).
+- A city Bandzone's search doesn't know fails at once (permanent) with "correct the city".
 
 ## Bandsintown (Selenium)
 
@@ -212,6 +247,12 @@ bzscraper.bandsintown.pacing.min-ms / .max-ms             # human pauses between
   to confirm PUBLISHED. Silent = "Do Not Announce = Y" + switch off (`announced_at`
   2000-01-01).
 - **Update** — Bulk Upload of a row WITH `Event Id` (+ `Status`) edits the event in place.
+- **When** — rows carry the band's `Slot` when the gig has one (`GigSchedule.showStart/showEnd`),
+  else the event's start/end: Bandsintown is about when the artist plays.
+- **Past events** — a published past gig is listed under Past Events, not Upcoming: the
+  create read-back checks the past list too. Deleting a PAST event is not automated (refused,
+  permanent: "delete it by hand"); an event in neither list counts as already removed. Edits
+  of past events were refused with `INVALID_START_TIME`.
 - **List (import)** — Upcoming + Past tabs' event lists (past is paged: `x-next-page`,
   more load on scroll) → `BitEventMapper` (no entry info on Bandsintown).
 - **Cancel/Delete** — Bandsintown has no cancelled state: both remove the event via the
@@ -230,7 +271,7 @@ H2 file DB at `./data/bzscraper-gigs` (`bzscraper.db.path`). The schema is owned
 **Flyway** (`src/main/resources/db/migration/V<n>__*.sql`); Hibernate runs with
 `ddl-auto=validate`, so every entity change needs a new migration (tests run the
 migrations on an in-memory H2 and fail on a mismatch). A pre-Flyway database is
-baselined at V1. V3 re-keys venue-less gigs (and their publications) to the `@city` identity; V4 adds the band-calendar tables (`calendar_rule`, `calendar_decision`); V5 the sync outbox (`sync_task`, `sync_log`). The H2 version is pinned in `pom.xml` (`h2.version`) because its file
+baselined at V1. V3 re-keys venue-less gigs (and their publications) to the `@city` identity; V4 adds the band-calendar tables (`calendar_rule`, `calendar_decision`); V5 the sync outbox (`sync_task`, `sync_log`); V6 the saved calendar copy and event → gig links (`calendar_event`, `calendar_link`); V7 the band's slot (`gig.slot_start/slot_end`). The H2 version is pinned in `pom.xml` (`h2.version`) because its file
 format changes between versions. `H2ScriptBackup` writes a plain-SQL `SCRIPT` backup on
 every start to `./data/backups` (one per day, newest 14 kept); restore with
 `org.h2.tools.RunScript`.

@@ -23,6 +23,11 @@ public class BandzoneGigWithdrawer implements GigWithdrawer {
     }
 
     @Override
+    public boolean withdrawsPastEvents(WithdrawAction action) {
+        return true;
+    }
+
+    @Override
     public Platform platform() {
         return Platform.BANDZONE;
     }

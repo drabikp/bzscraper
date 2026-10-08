@@ -28,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 
 /** In-memory stand-ins for the sync ports, behaving like the JPA adapters. */
@@ -91,6 +92,16 @@ final class SyncFakes {
                     && t.platform() == platform && t.status() == SyncStatus.PENDING).toList();
             pending.forEach(t -> change(t.id(), SyncStatus.DISCARDED, t.attempts(), null, "superseded: " + why, now));
             return pending;
+        }
+
+        @Override
+        public List<SyncTask> replaceFailed(GigId gigId, Platform platform, Set<SyncAction> actions, String why,
+                                            Instant now) {
+            List<SyncTask> failed = tasks.values().stream().filter(t -> t.gigId().equals(gigId)
+                    && t.platform() == platform && t.status() == SyncStatus.FAILED && actions.contains(t.action()))
+                    .toList();
+            failed.forEach(t -> change(t.id(), SyncStatus.DISCARDED, t.attempts(), null, "replaced: " + why, now));
+            return failed;
         }
 
         @Override

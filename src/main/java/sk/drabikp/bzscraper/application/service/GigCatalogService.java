@@ -6,6 +6,7 @@ import sk.drabikp.bzscraper.application.port.in.ListGigsUseCase;
 import sk.drabikp.bzscraper.application.port.in.ListPublicationsUseCase;
 import sk.drabikp.bzscraper.application.port.in.SaveGigUseCase;
 import sk.drabikp.bzscraper.application.port.in.UpdateGigUseCase;
+import sk.drabikp.bzscraper.application.port.out.CalendarLinkStore;
 import sk.drabikp.bzscraper.application.port.out.GigRepository;
 import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.application.port.out.Transactions;
@@ -15,7 +16,6 @@ import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.Platform;
 import sk.drabikp.bzscraper.domain.model.Publication;
 import sk.drabikp.bzscraper.domain.model.QueueResult;
-import sk.drabikp.bzscraper.domain.model.SyncTask;
 
 import java.util.EnumMap;
 import java.util.HashMap;
@@ -30,7 +30,7 @@ import java.util.Optional;
  * matching platform work in the sync outbox IN THE SAME TRANSACTION (see
  * {@link SyncRequests}), so the catalog and its pending platform work never disagree;
  * the platforms catch up when the sync worker runs. An edit that changes the gig's
- * identity also re-keys its published records and its pending tasks.
+ * identity also re-keys its published records, its pending tasks and its calendar links.
  */
 public class GigCatalogService
         implements SaveGigUseCase, ListGigsUseCase, DeleteGigUseCase, UpdateGigUseCase, CancelGigUseCase,
@@ -38,13 +38,15 @@ public class GigCatalogService
 
     private final GigRepository gigRepository;
     private final PublishedGigStore publishedGigStore;
+    private final CalendarLinkStore calendarLinks;
     private final Transactions transactions;
     private final SyncRequests sync;
 
     public GigCatalogService(GigRepository gigRepository, PublishedGigStore publishedGigStore,
-                             Transactions transactions, SyncRequests sync) {
+                             CalendarLinkStore calendarLinks, Transactions transactions, SyncRequests sync) {
         this.gigRepository = gigRepository;
         this.publishedGigStore = publishedGigStore;
+        this.calendarLinks = calendarLinks;
         this.transactions = transactions;
         this.sync = sync;
     }
@@ -76,9 +78,9 @@ public class GigCatalogService
     @Override
     public QueueResult delete(GigId id) {
         QueueResult queued = transactions.computeInTransaction(() -> {
-            String label = gigRepository.findById(id).map(SyncTask::labelOf).orElse(id.toString());
+            Gig gig = gigRepository.findById(id).orElse(null);
             gigRepository.deleteById(id);
-            return sync.delete(id, label);
+            return sync.delete(id, gig);
         });
         sync.signal(queued);
         return queued;
@@ -88,10 +90,11 @@ public class GigCatalogService
     public QueueResult update(GigId originalId, Gig updated) {
         QueueResult queued = transactions.computeInTransaction(() -> {
             // If the edit moved the gig's identity (date/venue changed), drop the old row
-            // and let the published records and pending platform work follow the gig.
+            // and let the published records, pending platform work and calendar links follow.
             if (!updated.id().equals(originalId)) {
                 gigRepository.deleteById(originalId);
                 publishedGigStore.move(originalId, updated.id());
+                calendarLinks.move(originalId, updated.id());
                 sync.move(originalId, updated);
             }
             Optional<Gig> before = gigRepository.findById(updated.id());

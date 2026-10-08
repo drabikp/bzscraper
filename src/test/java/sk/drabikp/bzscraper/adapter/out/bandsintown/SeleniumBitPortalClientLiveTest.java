@@ -13,6 +13,7 @@ import sk.drabikp.bzscraper.domain.model.Location;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -24,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  * Skipped unless {@code BIT_LIVE=true}. Reads creds from env so nothing is committed:
  *   BIT_LOGIN, BIT_PASSWORD, BIT_TOTP (authenticator secret)  (required)
  *   BIT_CLEANUP_ID  only delete this event id (e.g. one a failed run left behind)
+ *   BIT_INSPECT_IDS only print how the portal lists these event ids (comma-separated) — read-only
  *   BIT_HEADLESS (default true), BIT_CHROMIUM (default /usr/bin/chromium),
  *   BIT_CHROMEDRIVER (default /usr/bin/chromedriver), BIT_PROFILE (browser profile dir)
  *
@@ -63,6 +65,19 @@ class SeleniumBitPortalClientLiveTest {
                 GigSchedule.startingAt(ZonedDateTime.of(2027, 10, 7, 21, 30, 0, 0, BRATISLAVA)),
                 new Location("BZSCRAPER TEST VENUE", "Bratislava", Country.SLOVAKIA), List.of(),
                 Admission.free(), "Automated test event - edited, will be deleted.", null, null, null, false);
+
+        String inspectIds = env("BIT_INSPECT_IDS", "");
+        if (!inspectIds.isBlank()) {
+            assertThatCode(() -> {
+                try (BitSession session = client.openSession()) {
+                    List<String> ids = List.of(inspectIds.split(","));
+                    Map<String, String> found = ((SeleniumBitSession) session).inspect(ids);
+                    ids.forEach(id -> System.out.println("BIT inspect: " + id + " -> "
+                            + found.getOrDefault(id, "not listed (upcoming or past)")));
+                }
+            }).doesNotThrowAnyException();
+            return;
+        }
 
         String cleanupId = env("BIT_CLEANUP_ID", "");
         if (!cleanupId.isBlank()) {

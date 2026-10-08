@@ -22,6 +22,15 @@ public class BandsintownGigWithdrawer implements GigWithdrawer {
         this.portalClient = portalClient;
     }
 
+    /**
+     * No: both cancel and delete remove the event through the Upcoming list; a past event is
+     * only listed under Past Events, where the app doesn't remove anything.
+     */
+    @Override
+    public boolean withdrawsPastEvents(WithdrawAction action) {
+        return false;
+    }
+
     @Override
     public Platform platform() {
         return Platform.BANDSINTOWN;

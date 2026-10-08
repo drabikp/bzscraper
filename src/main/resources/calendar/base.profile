@@ -13,3 +13,6 @@ TITLE_REPEATED        -3  4
 CATALOG_GIG_SAME_DAY   2
 # A travel event that day goes there or arrives just before it.
 TRAVEL_LEADS_TO        3
+
+# Where the show time is in a day sheet (the event itself usually starts at arrival).
+SHOWTIME_LABEL         0  showtime|show time|stage time|set time|show

@@ -27,7 +27,8 @@ class GigCatalogServiceTest {
     private final SyncFakes.Signals signals = new SyncFakes.Signals();
     private final SyncFakes.DirectTransactions transactions = new SyncFakes.DirectTransactions();
     private final SyncFakes.MutableClock clock = new SyncFakes.MutableClock();
-    private final GigCatalogService service = new GigCatalogService(gigs, published, transactions,
+    private final CalendarFakes.Links calendarLinks = new CalendarFakes.Links();
+    private final GigCatalogService service = new GigCatalogService(gigs, published, calendarLinks, transactions,
             new SyncRequests(outbox, published, signals, signals, clock));
 
     private final Gig gig = TestGigs.gig("Fest", "Klub 007");
@@ -94,8 +95,9 @@ class GigCatalogServiceTest {
     }
 
     @Test
-    void an_edit_that_moves_the_gigs_identity_takes_its_records_and_pending_work_along() {
+    void an_edit_that_moves_the_gigs_identity_takes_its_records_pending_work_and_calendar_links_along() {
         onBothPlatforms(gig);
+        calendarLinks.link("event-1", gig.id());
         service.update(gig.id(), renamed(gig, "Fest 2026"));
         Gig moved = TestGigs.gig("Fest 2026", "Klub 007",
                 ZonedDateTime.of(2026, 10, 1, 20, 0, 0, 0, ZoneId.of("Europe/Prague")));
@@ -104,6 +106,7 @@ class GigCatalogServiceTest {
 
         assertThat(gigs.findById(gig.id())).isEmpty();
         assertThat(published.externalRef(BANDZONE, moved.id())).contains("100");
+        assertThat(calendarLinks.all()).containsEntry("event-1", moved.id());
         assertThat(pending()).hasSize(2).allSatisfy(t -> {
             assertThat(t.gigId()).isEqualTo(moved.id());
             assertThat(t.gigLabel()).startsWith("2026-10-01");

@@ -19,6 +19,9 @@ import java.util.Map;
  * export appends {@code Event Id} and {@code Status}, and uploading a row WITH an
  * Event Id updates that event in place instead of creating a new one.
  *
+ * <p>Start/end are the band's slot when the gig has one, else the event's (Bandzone gets the
+ * whole event; Bandsintown is about when the artist plays).
+ *
  * <p>"Do Not Announce = Y" makes Bandsintown treat the event as already announced, so
  * publishing it sends followers no notification.
  */
@@ -77,8 +80,10 @@ public final class BandsintownCsv {
     }
 
     private static String[] row(Gig gig, String artistName) {
-        ZonedDateTime start = gig.schedule().start();        // always present (invariant)
-        ZonedDateTime end = gig.schedule().end();
+        // Bandsintown lists when the ARTIST plays: the band's slot when the gig has one
+        // (a festival over several days), else the event itself.
+        ZonedDateTime start = gig.schedule().showStart();    // always present (invariant)
+        ZonedDateTime end = gig.schedule().showEnd();
         String ticketLink = nullToEmpty(gig.ticketUrl());
         return new String[]{
                 nullToEmpty(artistName),                                        // Artist Name

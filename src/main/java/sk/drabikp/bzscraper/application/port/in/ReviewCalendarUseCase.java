@@ -1,31 +1,37 @@
 package sk.drabikp.bzscraper.application.port.in;
 
 import sk.drabikp.bzscraper.application.port.out.CalendarUnavailableException;
-import sk.drabikp.bzscraper.domain.model.CalendarClassification;
-import sk.drabikp.bzscraper.domain.model.CalendarEvent;
 import sk.drabikp.bzscraper.domain.model.CalendarEventKind;
+import sk.drabikp.bzscraper.domain.model.CalendarOverview;
 import sk.drabikp.bzscraper.domain.model.ProfileRule;
 
 import java.util.List;
 
 /**
  * Sorting the band calendar's events into gigs and everything else, with the band's
- * profile, and remembering the user's answers. Reading and classifying are separate so
- * a verdict re-classifies without reading the calendar again.
+ * profile, remembering the user's answers, and keeping a copy of the calendar so each read
+ * shows what is new, changed or gone. Never changes the calendar.
  */
 public interface ReviewCalendarUseCase {
 
     boolean configured();
 
-    List<CalendarEvent> read() throws CalendarUnavailableException;
+    /** The calendar as last read, sorted and matched against the catalog — without reading it again. */
+    CalendarOverview overview();
 
-    List<CalendarClassification> classify(List<CalendarEvent> events);
+    /** Reads the calendar, compares it with the last read and saves it; then as {@link #overview()}. */
+    CalendarOverview read() throws CalendarUnavailableException;
 
     /** Remembers the user's verdict — {@code GIG} or {@code NOT_GIG} — for the event. */
     void decide(String eventId, CalendarEventKind verdict);
 
     /** Forgets the verdict; the profile decides again. */
     void forget(String eventId);
+
+    /** The user has seen the event's change; an event gone from the calendar is then forgotten (and unlinked). */
+    void seen(String eventId);
+
+    void seenAll();
 
     List<ProfileRule> rules();
 }

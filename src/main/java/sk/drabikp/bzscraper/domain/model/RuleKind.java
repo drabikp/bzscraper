@@ -48,7 +48,12 @@ public enum RuleKind {
      * {@code prefix} means tentative ({@code stav=potvrd}: "Stav: Potvrdené" is confirmed,
      * any other "Stav:" is not).
      */
-    CONFIRMED_FIELD(false, Value.FIELD);
+    CONFIRMED_FIELD(false, Value.FIELD),
+    /**
+     * The notes label whose time is the show time ("Showtime: 19:30"), for turning an event
+     * into a gig — the event's own start is usually the arrival. The first label found wins.
+     */
+    SHOWTIME_LABEL(false, Value.TEXT);
 
     /** What a rule of this kind needs as its value. */
     public enum Value { NONE, TEXT, NUMBER, FIELD }

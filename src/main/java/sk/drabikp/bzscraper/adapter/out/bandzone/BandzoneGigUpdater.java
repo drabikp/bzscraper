@@ -23,6 +23,11 @@ public class BandzoneGigUpdater implements GigUpdater {
     }
 
     @Override
+    public boolean updatesPastEvents() {
+        return true;
+    }
+
+    @Override
     public Platform platform() {
         return Platform.BANDZONE;
     }

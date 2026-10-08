@@ -37,6 +37,7 @@ import sk.drabikp.bzscraper.application.port.in.SyncLogUseCase;
 import sk.drabikp.bzscraper.application.port.in.UpdateGigUseCase;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.GigId;
+import sk.drabikp.bzscraper.domain.model.GigSchedule;
 import sk.drabikp.bzscraper.domain.model.Platform;
 import sk.drabikp.bzscraper.domain.model.Publication;
 import sk.drabikp.bzscraper.domain.model.QueueResult;
@@ -67,6 +68,8 @@ import java.util.stream.Collectors;
 public class GigListView extends VerticalLayout {
 
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("EEE d MMM yyyy HH:mm");
+    private static final DateTimeFormatter UNTIL = DateTimeFormatter.ofPattern("d MMM");
+    private static final DateTimeFormatter SLOT = DateTimeFormatter.ofPattern("EEE d MMM HH:mm");
     private static final String BUSY = "Being synced to a platform right now — wait until it finishes";
 
     private final ListGigsUseCase listGigs;
@@ -115,7 +118,7 @@ public class GigListView extends VerticalLayout {
 
         grid.setSelectionMode(Grid.SelectionMode.MULTI);
         grid.addThemeVariants(GridVariant.LUMO_ROW_STRIPES);
-        grid.addColumn(g -> g.schedule().start().format(WHEN)).setHeader("When").setAutoWidth(true);
+        grid.addColumn(GigListView::when).setHeader("When").setAutoWidth(true);
         grid.addColumn(Gig::title).setHeader("Event").setAutoWidth(true);
         grid.addColumn(g -> g.location().displayVenue()).setHeader("Venue").setAutoWidth(true);
         grid.addColumn(g -> g.location().city()).setHeader("City").setAutoWidth(true);
@@ -410,5 +413,18 @@ public class GigListView extends VerticalLayout {
         byte[] bytes = csv.getBytes(StandardCharsets.UTF_8);
         return DownloadHandler.fromInputStream(event ->
                 new DownloadResponse(new ByteArrayInputStream(bytes), "gigs.csv", "text/csv", bytes.length));
+    }
+
+    /** The event's start (and last day when it runs over several), and the band's slot when given. */
+    private static String when(Gig gig) {
+        GigSchedule schedule = gig.schedule();
+        String text = schedule.start().format(WHEN);
+        if (schedule.multiDay()) {
+            text += " – " + schedule.end().format(UNTIL);
+        }
+        if (schedule.hasSlot()) {
+            text += " · band plays " + schedule.slot().start().format(SLOT);
+        }
+        return text;
     }
 }

@@ -56,6 +56,11 @@ class SyncDispatcherTest {
         when(bzUpdater.platform()).thenReturn(BANDZONE);
         when(bzWithdrawer.platform()).thenReturn(BANDZONE);
         when(bitWithdrawer.platform()).thenReturn(BANDSINTOWN);
+        // these gigs are in the past (clock: 2026-10-08); past-event rules are tested in SyncRequestsTest
+        when(bzPublisher.publishesPastEvents()).thenReturn(true);
+        when(bzUpdater.updatesPastEvents()).thenReturn(true);
+        when(bzWithdrawer.withdrawsPastEvents(any())).thenReturn(true);
+        when(bitWithdrawer.withdrawsPastEvents(any())).thenReturn(true);
     }
 
     private SyncDispatcher dispatcher() {

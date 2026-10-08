@@ -31,6 +31,9 @@ public class GigEntity {
     private String title;
     private LocalDateTime startDateTime;
     private LocalDateTime endDateTime;
+    /** The band's own slot within the event (null when not given). */
+    private LocalDateTime slotStart;
+    private LocalDateTime slotEnd;
     private String venue;
     private String city;
     @Enumerated(EnumType.STRING)
@@ -70,6 +73,19 @@ public class GigEntity {
         this.ticketUrl = ticketUrl;
         this.posterImageUrl = posterImageUrl;
         this.cancelled = cancelled;
+    }
+
+    void setSlot(LocalDateTime start, LocalDateTime end) {
+        this.slotStart = start;
+        this.slotEnd = end;
+    }
+
+    LocalDateTime getSlotStart() {
+        return slotStart;
+    }
+
+    LocalDateTime getSlotEnd() {
+        return slotEnd;
     }
 
     public String getId() {

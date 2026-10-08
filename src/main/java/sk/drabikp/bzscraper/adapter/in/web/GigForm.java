@@ -8,14 +8,19 @@ import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.component.timepicker.TimePicker;
 import sk.drabikp.bzscraper.domain.model.Admission;
+import sk.drabikp.bzscraper.domain.model.CalendarGigDraft;
 import sk.drabikp.bzscraper.domain.model.Country;
 import sk.drabikp.bzscraper.domain.model.EntryType;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.GigSchedule;
 import sk.drabikp.bzscraper.domain.model.Location;
+import sk.drabikp.bzscraper.domain.model.Slot;
 
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.List;
 
@@ -31,6 +36,9 @@ class GigForm extends FormLayout {
     private final TimePicker startTime = new TimePicker("Start time");
     private final DatePicker endDate = new DatePicker("End date (optional)");
     private final TimePicker endTime = new TimePicker("End time (optional)");
+    private final DatePicker slotDate = new DatePicker("Band's slot: date (optional)");
+    private final TimePicker slotTime = new TimePicker("Band's slot: start");
+    private final TimePicker slotEndTime = new TimePicker("Band's slot: end (optional)");
     private final TextField venue = new TextField("Venue");
     private final TextField city = new TextField("City");
     private final ComboBox<Country> country = new ComboBox<>("Country");
@@ -49,10 +57,13 @@ class GigForm extends FormLayout {
         entryType.setItemLabelGenerator(GigForm::entryLabel);
         entryFee.setEnabled(false);
         entryType.addValueChangeListener(e -> entryFee.setEnabled(e.getValue() == EntryType.PAID));
+        slotDate.setHelperText("When the band itself plays, e.g. at a festival over several days. "
+                + "Bandsintown shows the slot; Bandzone shows the whole event.");
         clear();
 
-        add(name, venue, startDate, startTime, endDate, endTime, city, country, bands,
-                entryType, entryFee, facebookUrl, ticketUrl, posterUrl, description);
+        add(name, venue, startDate, startTime, endDate, endTime, slotDate, slotTime, slotEndTime, city, country,
+                bands, entryType, entryFee, facebookUrl, ticketUrl, posterUrl, description);
+        setColspan(slotDate, 2);
         setResponsiveSteps(
                 new ResponsiveStep("0", 1),
                 new ResponsiveStep("28rem", 2));
@@ -63,8 +74,12 @@ class GigForm extends FormLayout {
         name.clear();
         startDate.clear();
         startTime.clear();
+        startTime.setHelperText(null);
         endDate.clear();
         endTime.clear();
+        slotDate.clear();
+        slotTime.clear();
+        slotEndTime.clear();
         venue.clear();
         city.clear();
         bands.clear();
@@ -85,6 +100,14 @@ class GigForm extends FormLayout {
             endDate.setValue(gig.schedule().end().toLocalDate());
             endTime.setValue(gig.schedule().end().toLocalTime());
         }
+        Slot slot = gig.schedule().slot();
+        if (slot != null) {
+            slotDate.setValue(slot.start().toLocalDate());
+            slotTime.setValue(slot.start().toLocalTime());
+            if (slot.end() != null) {
+                slotEndTime.setValue(slot.end().toLocalTime());
+            }
+        }
         venue.setValue(gig.location().displayVenue().equals("TBA") ? "" : gig.location().venue());
         city.setValue(gig.location().city());
         country.setValue(gig.location().country());
@@ -97,6 +120,67 @@ class GigForm extends FormLayout {
         posterUrl.setValue(nn(gig.posterImageUrl()));
     }
 
+    /** Starts a new gig from what a calendar event says; what it doesn't say stays empty for the user. */
+    void prefill(CalendarGigDraft draft) {
+        clear();
+        name.setValue(draft.title());
+        startDate.setValue(draft.date());
+        if (draft.showTime() != null) {
+            startTime.setValue(draft.showTime());
+        } else if (draft.eventStart() != null) {
+            startTime.setHelperText("No show time in the notes; the event starts at " + draft.eventStart()
+                    + " (usually the arrival)");
+        }
+        venue.setValue(draft.venue() == null ? "" : draft.venue());
+        city.setValue(draft.city() == null ? "" : draft.city());
+        if (draft.country() != null) {
+            country.setValue(draft.country());
+        } else {
+            country.clear();
+        }
+    }
+
+    /**
+     * Applies the calendar's show — the BAND's day and time: to the band's slot when the gig
+     * has one or the event runs over several days, otherwise to the event's start
+     * ({@code moveDay}: the day changed, not only the time).
+     */
+    void applyShow(LocalDate day, LocalTime time, boolean moveDay) {
+        if (!slotDate.isEmpty() || multiDay()) {
+            slotDate.setValue(day);
+            if (time != null) {
+                slotTime.setValue(time);
+            }
+        } else {
+            reschedule(moveDay ? day : null, time);
+        }
+    }
+
+    private boolean multiDay() {
+        if (startDate.isEmpty() || endDate.isEmpty()) {
+            return false;
+        }
+        LocalDate last = endDate.getValue();
+        if (LocalTime.MIDNIGHT.equals(endTime.getValue())) {
+            last = last.minusDays(1);
+        }
+        return last.isAfter(startDate.getValue());
+    }
+
+    /** Moves the start to another day and/or time (null = keep), keeping the length when there is an end. */
+    void reschedule(LocalDate day, LocalTime time) {
+        LocalDate oldDay = startDate.getValue();
+        if (day != null) {
+            if (!endDate.isEmpty() && oldDay != null) {
+                endDate.setValue(endDate.getValue().plusDays(ChronoUnit.DAYS.between(oldDay, day)));
+            }
+            startDate.setValue(day);
+        }
+        if (time != null) {
+            startTime.setValue(time);
+        }
+    }
+
     /** @return an error message if the form is invalid, otherwise {@code null}. */
     String validationError() {
         if (name.isEmpty() || startDate.isEmpty() || startTime.isEmpty()
@@ -105,6 +189,14 @@ class GigForm extends FormLayout {
         }
         if (entryType.getValue() == EntryType.PAID && entryFee.isEmpty()) {
             return "Enter the entry fee, or change the entry type";
+        }
+        if (slotDate.isEmpty() != slotTime.isEmpty() || slotDate.isEmpty() && !slotEndTime.isEmpty()) {
+            return "Give the band's slot a date and a start time, or leave all its fields empty";
+        }
+        try {
+            toGig();
+        } catch (IllegalArgumentException e) {
+            return "Check the dates: " + e.getMessage();
         }
         return null;
     }
@@ -120,7 +212,19 @@ class GigForm extends FormLayout {
             case VOLUNTARY -> Admission.voluntary();
             case PAID -> Admission.paid(entryFee.getValue());
         };
-        return Gig.create(name.getValue(), new GigSchedule(start, end),
+        Slot slot = null;
+        if (!slotDate.isEmpty() && !slotTime.isEmpty()) {
+            ZonedDateTime slotStart = ZonedDateTime.of(slotDate.getValue(), slotTime.getValue(), zone);
+            ZonedDateTime slotEnd = null;
+            if (!slotEndTime.isEmpty()) {
+                slotEnd = ZonedDateTime.of(slotDate.getValue(), slotEndTime.getValue(), zone);
+                if (slotEnd.isBefore(slotStart)) {
+                    slotEnd = slotEnd.plusDays(1);          // a set past midnight
+                }
+            }
+            slot = new Slot(slotStart, slotEnd);
+        }
+        return Gig.create(name.getValue(), new GigSchedule(start, end, slot),
                 new Location(venue.getValue(), city.getValue(), c), parseLineup(bands.getValue()), admission,
                 nullIfBlank(description.getValue()), nullIfBlank(facebookUrl.getValue()),
                 nullIfBlank(ticketUrl.getValue()), nullIfBlank(posterUrl.getValue()));

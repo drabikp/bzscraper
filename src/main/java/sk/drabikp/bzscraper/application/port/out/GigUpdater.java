@@ -13,4 +13,7 @@ public interface GigUpdater {
     Platform platform();
 
     void update(String externalRef, Gig gig) throws GigUpdateException;
+
+    /** Whether the platform takes changes to events that are already over; if not, they are never tried. */
+    boolean updatesPastEvents();
 }

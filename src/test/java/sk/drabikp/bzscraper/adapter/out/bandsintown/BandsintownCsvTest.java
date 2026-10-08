@@ -4,8 +4,13 @@ import com.opencsv.CSVReader;
 import org.junit.jupiter.api.Test;
 import sk.drabikp.bzscraper.TestGigs;
 import sk.drabikp.bzscraper.domain.model.Gig;
+import sk.drabikp.bzscraper.domain.model.GigSchedule;
+import sk.drabikp.bzscraper.domain.model.Slot;
 
 import java.io.StringReader;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -52,5 +57,22 @@ class BandsintownCsvTest {
     @Test
     void the_download_template_leaves_do_not_announce_blank() throws Exception {
         assertThat(parse(BandsintownCsv.template(List.of(gig), "X")).get(1)[25]).isEmpty();
+    }
+
+    @Test
+    void a_festival_with_the_bands_slot_is_listed_at_the_slot_otherwise_at_the_event() throws Exception {
+        ZoneId zone = ZoneId.of("Europe/Bratislava");
+        GigSchedule festival = new GigSchedule(ZonedDateTime.of(2026, 8, 27, 12, 0, 0, 0, zone),
+                ZonedDateTime.of(2026, 8, 30, 0, 0, 0, 0, zone));
+        Gig withSlot = new Gig("Moto Fest", festival.withSlot(new Slot(ZonedDateTime.of(2026, 8, 28, 19, 30, 0, 0, zone),
+                ZonedDateTime.of(2026, 8, 28, 20, 45, 0, 0, zone))), gig.location(), List.of(), gig.admission(),
+                null, null, null, null, false);
+        Gig withoutSlot = new Gig("Moto Fest", festival, gig.location(), List.of(), gig.admission(),
+                null, null, null, null, false);
+
+        assertThat(Arrays.copyOfRange(parse(BandsintownCsv.newEvents(List.of(withSlot), "X", false)).get(1), 8, 12))
+                .containsExactly("2026-08-28", "19:30", "2026-08-28", "20:45");
+        assertThat(Arrays.copyOfRange(parse(BandsintownCsv.newEvents(List.of(withoutSlot), "X", false)).get(1), 8, 12))
+                .containsExactly("2026-08-27", "12:00", "2026-08-30", "00:00");
     }
 }

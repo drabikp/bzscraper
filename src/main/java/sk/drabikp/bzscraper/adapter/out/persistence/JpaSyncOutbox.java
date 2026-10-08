@@ -14,6 +14,7 @@ import sk.drabikp.bzscraper.domain.model.SyncTask;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * JPA-backed {@link SyncOutbox} (tables {@code sync_task} + {@code sync_log}) in the
@@ -83,6 +84,20 @@ public class JpaSyncOutbox implements SyncOutbox {
             write(task, now, "superseded: " + why);
         }
         return toTasks(pending);
+    }
+
+    @Override
+    public List<SyncTask> replaceFailed(GigId gigId, Platform platform, Set<SyncAction> actions, String why,
+                                        Instant now) {
+        List<SyncTaskEntity> failed = tasks.findByGigIdAndPlatformAndStatusOrderByIdAsc(
+                        GigEntityMapper.serializeId(gigId), platform.name(), SyncStatus.FAILED.name()).stream()
+                .filter(task -> actions.contains(task.toTask().action()))
+                .toList();
+        for (SyncTaskEntity task : failed) {
+            task.change(SyncStatus.DISCARDED, null, "replaced: " + why, now);
+            write(task, now, "replaced: " + why);
+        }
+        return toTasks(failed);
     }
 
     @Override

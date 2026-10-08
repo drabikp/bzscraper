@@ -40,6 +40,21 @@ band's conventions are **data** — a band profile of weighted rules.
 - **UI** `/calendar`: read the calendar, filter by result, mark Gig / Not a gig / undo,
   see why, see the rules.
 
+## Step 1b — into the catalog, and tracking changes (implemented)
+
+- **Saved copy**: every read is stored (`calendar_event`) and compared with the previous
+  one — new, changed (which fields; "was not sure, now a gig"), removed, returned — until
+  the user marks it seen. The first read is the baseline.
+- **Add to catalog**: a gig event the catalog doesn't have opens the gig form pre-filled
+  (`CalendarGigDrafter`): show time from `SHOWTIME_LABEL` notes labels, venue/city/country
+  from the map-style place. The private notes are shown next to it, never copied.
+- **Links** (`calendar_link`): an added gig is linked to its event; existing catalog gigs
+  are linked by day (one at a time, or in bulk where the day has exactly one catalog gig).
+- **Changes to linked upcoming gigs** (`CalendarCatalogMatcher`): another day / show time
+  → Update; cancelled in the calendar → Cancel; gone from the calendar → Cancel / Delete /
+  Keep. Always the user's click, through the catalog — the platforms follow via the outbox.
+- Next: read the calendar on a schedule (server) so changes arrive without opening the page.
+
 ## Step 2 — learn the profile from the band's history
 
 1. **Self-labelling** from the catalog's platform-linked gigs: for each platform gig,
@@ -60,7 +75,7 @@ band's conventions are **data** — a band profile of weighted rules.
    is reported, not changed.
 5. **Calibrate extraction**: the note label whose time equals the platform start time is
    the band's show-time label (Eufory: `showtime` 10×, `čas predbežne` 4×) → rule kind
-   `SHOWTIME_LABEL` (used when calendar events become draft gigs).
+   `SHOWTIME_LABEL` (exists since step 1b, preset values; learning would add the band's own).
 6. **Backtest** before saving: run the new profile over the history and show "of your N
    known gigs this finds X, misses Y, flags Z others"; refuse silently worse profiles —
    show the difference and let the user choose.
@@ -70,7 +85,7 @@ band's conventions are **data** — a band profile of weighted rules.
    `showtime:` … as gig evidence — without any Slovak built in. A title used 4+ times:
    0 of 77 gigs, 121 of 273 others.
 
-New kinds needed: `SHOWTIME_LABEL`; possibly `HAS_LOCATION`, `TITLE_COLOR`/`CALENDAR`
+New kinds possibly needed: `HAS_LOCATION`, `TITLE_COLOR`/`CALENDAR`
 (only with Google sign-in — the iCal export carries no colors).
 
 ## Step 3 — setup wizard and presets, for any band

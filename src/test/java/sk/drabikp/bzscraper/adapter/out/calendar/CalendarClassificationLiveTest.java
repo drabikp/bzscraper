@@ -10,6 +10,7 @@ import sk.drabikp.bzscraper.domain.model.CalendarEventKind;
 import sk.drabikp.bzscraper.domain.model.ProfileRule;
 import sk.drabikp.bzscraper.domain.model.RuleOrigin;
 import sk.drabikp.bzscraper.domain.service.CalendarEventClassifier;
+import sk.drabikp.bzscraper.domain.service.CalendarGigDrafter;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -52,8 +53,8 @@ class CalendarClassificationLiveTest {
                 : Files.readAllLines(Path.of(daysFile)).stream().map(String::strip).filter(s -> !s.isEmpty())
                 .map(LocalDate::parse).collect(Collectors.toSet());
 
-        List<CalendarClassification> results = CalendarEventClassifier.classify(events,
-                new BandProfile(rules, new BandProfile.Thresholds(4, -1, -4)), catalogDays, Map.of());
+        BandProfile profile = new BandProfile(rules, new BandProfile.Thresholds(4, -1, -4));
+        List<CalendarClassification> results = CalendarEventClassifier.classify(events, profile, catalogDays, Map.of());
 
         Map<CalendarEventKind, Long> counts = results.stream()
                 .collect(Collectors.groupingBy(CalendarClassification::kind, Collectors.counting()));
@@ -68,6 +69,14 @@ class CalendarClassificationLiveTest {
         results.stream().filter(c -> c.kind() == CalendarEventKind.NOT_GIG && c.score() > -4)
                 .sorted(Comparator.comparing(c -> c.event().start()))
                 .forEach(CalendarClassificationLiveTest::print);
+
+        System.out.println("== GIG as a draft (date, show time, venue | city | country) — notes are not printed");
+        results.stream().filter(c -> c.kind() == CalendarEventKind.GIG)
+                .sorted(Comparator.comparing(c -> c.event().start()))
+                .map(c -> CalendarGigDrafter.draft(c.event(), profile))
+                .forEach(d -> System.out.printf("  %s %-5s %-40.40s | %-24.24s | %s%n", d.date(),
+                        d.showTime() == null ? "-" : d.showTime(), d.venue() == null ? "-" : d.venue(),
+                        d.city() == null ? "-" : d.city(), d.country() == null ? "-" : d.country()));
 
         assertThat(events).isNotEmpty();
     }

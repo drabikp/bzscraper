@@ -353,7 +353,7 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
             wait.until(ExpectedConditions.presenceOfElementLocated(By.name("start[date]")));
         }
 
-        private void fillDateAndCity(Gig gig) {
+        private void fillDateAndCity(Gig gig) throws BandzoneUploadException {
             setValue(driver, "[name='start[date]']", gig.schedule().start().format(BZ_DATE));
             setValue(driver, "[name='start[time]']", gig.schedule().start().format(BZ_TIME));
             selectCity(gig.location().city());
@@ -365,7 +365,7 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
          * it (editing a gig in the same city); otherwise waits for {@code cityId} to take
          * the newly picked value.
          */
-        private void selectCity(String city) {
+        private void selectCity(String city) throws BandzoneUploadException {
             String currentText = driver.findElement(By.name("cityId__container[textInput]")).getAttribute("value");
             String previousId = driver.findElement(By.name("cityId")).getAttribute("value");
             if (city.equalsIgnoreCase(currentText) && previousId != null && !previousId.isBlank()) {
@@ -374,8 +374,15 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
             setValue(driver, "[name='cityId__container[textInput]']", city);
             jsClickByName(driver, "cityId__container[searchButton]");
 
-            WebElement suggestion = wait.until(ExpectedConditions.presenceOfElementLocated(By.xpath(
-                    "//li[starts-with(normalize-space(.), '" + city + "')]")));
+            WebElement suggestion;
+            try {
+                suggestion = wait.until(ExpectedConditions.presenceOfElementLocated(By.xpath(
+                        "//li[starts-with(normalize-space(.), " + xpathLiteral(city) + ")]")));
+            } catch (TimeoutException e) {
+                throw new BandzoneUploadException("Bandzone doesn't know the city '" + city
+                        + "' — correct the gig's city (the town's name, e.g. not just a district) and try again.",
+                        e, true);
+            }
             WebElement cityIdInput = driver.findElement(By.name("cityId"));
             jsClick(driver, suggestion);
             awaitFormReload(cityIdInput);
@@ -384,6 +391,14 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
                 String v = d.findElement(By.name("cityId")).getAttribute("value");
                 return v != null && !v.isBlank() && !v.equals(previousId);
             });
+        }
+
+        /** An XPath string literal for any text (a city name may contain an apostrophe). */
+        private static String xpathLiteral(String text) {
+            if (!text.contains("'")) {
+                return "'" + text + "'";
+            }
+            return "concat('" + text.replace("'", "', \"'\", '") + "')";
         }
 
         /**

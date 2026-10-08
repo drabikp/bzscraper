@@ -8,6 +8,8 @@ import sk.drabikp.bzscraper.application.port.out.BandzonePortalClient;
 import sk.drabikp.bzscraper.application.port.out.BitPortalClient;
 import sk.drabikp.bzscraper.application.port.out.CalendarDecisionStore;
 import sk.drabikp.bzscraper.application.port.out.CalendarFeed;
+import sk.drabikp.bzscraper.application.port.out.CalendarLinkStore;
+import sk.drabikp.bzscraper.application.port.out.CalendarSnapshotStore;
 import sk.drabikp.bzscraper.application.port.out.GigCsvExporter;
 import sk.drabikp.bzscraper.application.port.out.GigImporter;
 import sk.drabikp.bzscraper.application.port.out.GigProvider;
@@ -20,6 +22,7 @@ import sk.drabikp.bzscraper.application.port.out.SyncNotifier;
 import sk.drabikp.bzscraper.application.port.out.SyncOutbox;
 import sk.drabikp.bzscraper.application.port.out.SyncTrigger;
 import sk.drabikp.bzscraper.application.port.out.Transactions;
+import sk.drabikp.bzscraper.application.service.AdapterCapabilities;
 import sk.drabikp.bzscraper.application.service.BandsintownGigPublisher;
 import sk.drabikp.bzscraper.application.service.BandzoneGigPublisher;
 import sk.drabikp.bzscraper.application.service.CalendarReviewService;
@@ -33,6 +36,7 @@ import sk.drabikp.bzscraper.application.service.SyncDispatcher;
 import sk.drabikp.bzscraper.application.service.SyncLogService;
 import sk.drabikp.bzscraper.application.service.SyncRequests;
 import sk.drabikp.bzscraper.domain.model.BandProfile;
+import sk.drabikp.bzscraper.domain.model.PlatformSupport;
 
 import java.time.Clock;
 import java.util.List;
@@ -67,10 +71,17 @@ public class UseCaseConfiguration {
         return Clock.systemDefaultZone();
     }
 
+    /** What each platform can do with past events — declared by its adapters, never configured. */
+    @Bean
+    PlatformSupport platformSupport(List<GigPublisher> publishers, List<GigUpdater> updaters,
+                                    List<GigWithdrawer> withdrawers) {
+        return AdapterCapabilities.of(publishers, updaters, withdrawers);
+    }
+
     @Bean
     SyncRequests syncRequests(SyncOutbox outbox, PublishedGigStore publishedGigStore, SyncTrigger trigger,
-                              SyncNotifier notifier, Clock clock) {
-        return new SyncRequests(outbox, publishedGigStore, trigger, notifier, clock);
+                              SyncNotifier notifier, Clock clock, PlatformSupport platformSupport) {
+        return new SyncRequests(outbox, publishedGigStore, trigger, notifier, clock, platformSupport);
     }
 
     @Bean
@@ -80,8 +91,9 @@ public class UseCaseConfiguration {
 
     @Bean
     GigCatalogService gigCatalogService(GigRepository gigRepository, PublishedGigStore publishedGigStore,
-                                        Transactions transactions, SyncRequests syncRequests) {
-        return new GigCatalogService(gigRepository, publishedGigStore, transactions, syncRequests);
+                                        CalendarLinkStore calendarLinks, Transactions transactions,
+                                        SyncRequests syncRequests) {
+        return new GigCatalogService(gigRepository, publishedGigStore, calendarLinks, transactions, syncRequests);
     }
 
     @Bean
@@ -113,11 +125,12 @@ public class UseCaseConfiguration {
     @Bean
     CalendarReviewService calendarReviewService(
             CalendarFeed feed, BandProfileStore profileStore, CalendarDecisionStore decisionStore,
-            GigRepository gigRepository,
+            CalendarSnapshotStore snapshotStore, CalendarLinkStore linkStore, GigRepository gigRepository,
+            Transactions transactions, Clock clock,
             @Value("${bzscraper.calendar.gig-score:4}") int gigScore,
             @Value("${bzscraper.calendar.not-gig-score:-1}") int notGigScore,
             @Value("${bzscraper.calendar.strong-negative:-4}") int strongNegative) {
-        return new CalendarReviewService(feed, profileStore, decisionStore, gigRepository,
-                new BandProfile.Thresholds(gigScore, notGigScore, strongNegative));
+        return new CalendarReviewService(feed, profileStore, decisionStore, snapshotStore, linkStore, gigRepository,
+                transactions, clock, new BandProfile.Thresholds(gigScore, notGigScore, strongNegative));
     }
 }

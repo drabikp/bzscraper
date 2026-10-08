@@ -31,3 +31,4 @@ CANCELLED_NOTES     0  koncert zrusen|koncert je zrusen|akcia zrusen|akce zrusen
 TENTATIVE_TITLE     0  predbezne|?
 TENTATIVE_NOTES     0  v jednani|nepotvrden
 CONFIRMED_FIELD     0  stav=potvrd
+SHOWTIME_LABEL      0  vystupenie|vystoupeni|zaciatok koncertu|zacatek koncertu|cas predbezne

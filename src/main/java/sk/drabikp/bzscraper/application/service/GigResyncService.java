@@ -38,7 +38,8 @@ public class GigResyncService implements ResyncGigUseCase {
                 }
                 QueueResult one = sync.update(gig.get());
                 queued.addAll(one.queued());
-                if (one.queued().isEmpty()) {
+                notQueued.addAll(one.notQueued());
+                if (one.queued().isEmpty() && one.notQueued().isEmpty()) {
                     notQueued.add(gig.get().title() + ": not on any platform, or an update is already waiting");
                 }
             }

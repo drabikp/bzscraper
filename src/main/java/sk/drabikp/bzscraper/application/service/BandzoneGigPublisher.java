@@ -28,6 +28,11 @@ public class BandzoneGigPublisher implements GigPublisher {
     }
 
     @Override
+    public boolean publishesPastEvents() {
+        return true;                        // Bandzone keeps the band's past concerts
+    }
+
+    @Override
     public Platform platform() {
         return Platform.BANDZONE;
     }

@@ -24,6 +24,15 @@ public class BandsintownGigUpdater implements GigUpdater {
         this.portalClient = portalClient;
     }
 
+    /**
+     * No: Bandsintown refuses an upload that edits a past event (seen: {@code INVALID_START_TIME},
+     * {@code INVALID_EVENT_ID}).
+     */
+    @Override
+    public boolean updatesPastEvents() {
+        return false;
+    }
+
     @Override
     public Platform platform() {
         return Platform.BANDSINTOWN;
@@ -37,7 +46,7 @@ public class BandsintownGigUpdater implements GigUpdater {
         try (BitSession session = portalClient.openSession()) {
             session.updateEvent(externalRef, gig);
         } catch (BitUploadException e) {
-            String hint = e.permanent() && gig.schedule().start().isBefore(ZonedDateTime.now())
+            String hint = e.permanent() && gig.schedule().showStart().isBefore(ZonedDateTime.now())
                     ? " — the gig is in the past, and Bandsintown may not accept changes to past events" : "";
             throw new GigUpdateException(e.getMessage() + hint, e, e.permanent());
         }

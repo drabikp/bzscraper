@@ -6,6 +6,7 @@ import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.GigSchedule;
 import sk.drabikp.bzscraper.domain.model.Location;
+import sk.drabikp.bzscraper.domain.model.Slot;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -36,7 +37,7 @@ final class GigEntityMapper {
 
     static GigEntity toEntity(Gig gig) {
         ZonedDateTime end = gig.schedule().end();
-        return new GigEntity(
+        GigEntity entity = new GigEntity(
                 serializeId(gig.id()),
                 gig.title(),
                 gig.schedule().start().toLocalDateTime(),
@@ -52,16 +53,23 @@ final class GigEntityMapper {
                 gig.ticketUrl(),
                 gig.posterImageUrl(),
                 gig.cancelled());
+        Slot slot = gig.schedule().slot();
+        if (slot != null) {
+            entity.setSlot(slot.start().toLocalDateTime(), slot.end() != null ? slot.end().toLocalDateTime() : null);
+        }
+        return entity;
     }
 
     static Gig toDomain(GigEntity e) {
         ZoneId zone = e.getCountry() != null ? ZoneId.of(e.getCountry().timezone()) : ZoneId.systemDefault();
         ZonedDateTime start = e.getStartDateTime().atZone(zone);
         ZonedDateTime end = e.getEndDateTime() != null ? e.getEndDateTime().atZone(zone) : null;
+        Slot slot = e.getSlotStart() == null ? null : new Slot(e.getSlotStart().atZone(zone),
+                e.getSlotEnd() != null ? e.getSlotEnd().atZone(zone) : null);
 
         return new Gig(
                 e.getTitle(),
-                new GigSchedule(start, end),
+                new GigSchedule(start, end, slot),
                 new Location(e.getVenue(), e.getCity(), e.getCountry()),
                 splitLineup(e.getLineup()),
                 toAdmission(e.getEntryType(), e.getEntryFee()),

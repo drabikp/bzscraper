@@ -9,6 +9,7 @@ import sk.drabikp.bzscraper.domain.model.Country;
 import sk.drabikp.bzscraper.domain.model.DateRange;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.GigSchedule;
+import sk.drabikp.bzscraper.domain.model.Slot;
 import sk.drabikp.bzscraper.domain.model.Location;
 
 import java.time.LocalDate;
@@ -58,6 +59,21 @@ class JpaGigRepositoryTest {
         assertThat(reloaded.admission().amount()).isEqualTo("150 Kč");
         assertThat(reloaded.ticketUrl()).isEqualTo("https://tickets.example");
         assertThat(reloaded.cancelled()).isFalse();
+    }
+
+    @Test
+    void keeps_a_festivals_length_and_the_bands_slot() {
+        GigSchedule festival = new GigSchedule(prague(2026, 8, 27, 12, 0), prague(2026, 8, 30, 0, 0),
+                new Slot(prague(2026, 8, 28, 19, 30), prague(2026, 8, 28, 20, 45)));
+        Gig gig = new Gig("Moto Fest", festival, new Location("Camp", "Stará Turá", Country.CZECHIA), List.of(),
+                Admission.free(), null, null, null, null, false);
+
+        repository.save(gig);
+
+        assertThat(repository.findById(gig.id())).get().extracting(Gig::schedule).isEqualTo(festival);
+        repository.save(new Gig("Moto Fest", festival.withSlot(null), gig.location(), List.of(), Admission.free(),
+                null, null, null, null, false));
+        assertThat(repository.findById(gig.id()).orElseThrow().schedule().hasSlot()).as("slot removed").isFalse();
     }
 
     @Test

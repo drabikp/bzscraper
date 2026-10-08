@@ -43,7 +43,7 @@ public final class GigMerge {
                 : new GigSchedule(base.schedule().start(), order.stream()
                         .map(v -> v.gig().schedule().end())
                         .filter(end -> end != null && end.isAfter(base.schedule().start()))
-                        .findFirst().orElse(null));
+                        .findFirst().orElse(null), base.schedule().slot());
 
         return new Gig(base.title(), schedule, base.location(), lineup, admission,
                 firstText(order, Gig::description), firstText(order, Gig::facebookUrl),

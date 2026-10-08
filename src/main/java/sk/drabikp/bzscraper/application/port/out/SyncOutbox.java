@@ -9,6 +9,7 @@ import sk.drabikp.bzscraper.domain.model.SyncTask;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * The sync outbox: platform work waiting to be done, being done and done, with each
@@ -35,6 +36,12 @@ public interface SyncOutbox {
 
     /** Discards the gig's PENDING tasks on the platform, logging {@code why}; returns them. */
     List<SyncTask> supersede(GigId gigId, Platform platform, String why, Instant now);
+
+    /**
+     * Discards the gig's FAILED tasks of these actions on the platform — a newer task does
+     * their work now — logging {@code why}; returns them.
+     */
+    List<SyncTask> replaceFailed(GigId gigId, Platform platform, Set<SyncAction> actions, String why, Instant now);
 
     /** Follows a gig whose identity changed (an edit moved its date or venue). */
     void move(GigId from, GigId to, String newLabel);

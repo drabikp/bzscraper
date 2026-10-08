@@ -19,8 +19,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -168,7 +170,7 @@ final class SeleniumBitSession implements BitSession {
             clickOk();                              // every row matched an existing event
         }
 
-        Map<String, String> statuses = upcomingStatuses();
+        Map<String, String> statuses = statuses(batch);
         List<Created> results = new ArrayList<>();
         for (int i = 0; i < batch.size(); i++) {
             Gig gig = batch.get(i);
@@ -262,6 +264,11 @@ final class SeleniumBitSession implements BitSession {
         List<Map<String, Object>> events = upcomingEvents();
         int index = indexOf(events, eventId);
         if (index < 0) {
+            pacer.pause();
+            if (pastEvents().stream().anyMatch(e -> eventId.equals(idOf(e)))) {
+                throw new BitUploadException("Bandsintown event " + eventId + " is a past event, which this app "
+                        + "can't remove — delete it on Bandsintown by hand (Past Events).", null, true);
+            }
             logger.info("Bandsintown event {} is not listed — already removed", eventId);
             return;
         }
@@ -331,6 +338,26 @@ final class SeleniumBitSession implements BitSession {
             }
             throw new BitUploadException("Could not read the Bandsintown events: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Read-only: what the portal lists for the given event ids, upcoming and past — "status
+     * start_date (upcoming|past)", or nothing for an id it doesn't list. For checking by hand.
+     */
+    Map<String, String> inspect(Collection<String> ids) throws BitUploadException {
+        Map<String, String> found = new LinkedHashMap<>();
+        for (Map<String, Object> event : upcomingEvents()) {
+            if (ids.contains(idOf(event))) {
+                found.put(idOf(event), event.get("status") + " " + event.get("start_date") + " (upcoming)");
+            }
+        }
+        pacer.pause();
+        for (Map<String, Object> event : pastEvents()) {
+            if (ids.contains(idOf(event))) {
+                found.putIfAbsent(idOf(event), event.get("status") + " " + event.get("start_date") + " (past)");
+            }
+        }
+        return found;
     }
 
     /** All past events: the first 20 come with the tab, the rest load as the list is scrolled. */
@@ -454,10 +481,21 @@ final class SeleniumBitSession implements BitSession {
         return BitResponses.events(reply);
     }
 
-    private Map<String, String> upcomingStatuses() throws BitUploadException {
+    /**
+     * The status of each listed event: the upcoming list, plus the past list when the batch
+     * has gigs already played (published past events are listed there, not as upcoming).
+     */
+    private Map<String, String> statuses(List<Gig> batch) throws BitUploadException {
         Map<String, String> statuses = new HashMap<>();
         for (Map<String, Object> event : upcomingEvents()) {
             statuses.put(idOf(event), String.valueOf(event.get("status")));
+        }
+        ZonedDateTime now = ZonedDateTime.now();
+        if (batch.stream().anyMatch(gig -> gig.schedule().showStart().isBefore(now))) {
+            pacer.pause();
+            for (Map<String, Object> event : pastEvents()) {
+                statuses.putIfAbsent(idOf(event), String.valueOf(event.get("status")));
+            }
         }
         return statuses;
     }

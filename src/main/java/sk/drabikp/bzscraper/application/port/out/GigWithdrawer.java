@@ -13,4 +13,7 @@ public interface GigWithdrawer {
     Platform platform();
 
     void withdraw(String externalRef, WithdrawAction action) throws GigWithdrawalException;
+
+    /** Whether {@code action} works on events that are already over; if not, it is never tried. */
+    boolean withdrawsPastEvents(WithdrawAction action);
 }
