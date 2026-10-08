@@ -48,6 +48,13 @@ public interface BitSession extends AutoCloseable {
      */
     void deleteEvent(String eventId, boolean cancelled) throws BitUploadException;
 
+    /**
+     * Removes the event through its single-page form — which also opens for PAST events, which
+     * the event list can't remove. Same reasons as {@link #deleteEvent}; already gone is not an
+     * error.
+     */
+    void deleteEventInForm(String eventId, boolean cancelled) throws BitUploadException;
+
     /** Every event of the artist on Bandsintown — upcoming and past — with its event id. */
     List<ImportedGig> listEvents() throws BitUploadException;
 

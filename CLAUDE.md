@@ -71,7 +71,7 @@ Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
   `BandzoneFormCreate`/`BandzoneCancel`/`BandzoneRemove` (steps), `StubBandzonePortalClient`); `csv/` (`OpenCsvGigExporter`, the
   manual-import download); `bandsintown/` (`BandsintownCsv` format, Selenium
   `SeleniumBitPortalClient` + `SeleniumBitSession`, `HumanPacer`, `Totp`,
-  `BandsintownBulkCreate`/`BandsintownBulkEdit`/`BandsintownCancel`/`BandsintownRemove` (steps), `StubBitPortalClient`).
+  `BandsintownBulkCreate`/`BandsintownBulkEdit`/`BandsintownFormEdit`/`BandsintownCancel`/`BandsintownRemove`/`BandsintownFormCancel`/`BandsintownFormRemove` (steps), `StubBitPortalClient`).
 - **config/** — `UseCaseConfiguration` wires POJO services as `@Bean`s; `BandProfileSync`
   loads the shipped + band calendar rules on start.
 
@@ -97,8 +97,11 @@ PUBLISH     bulk upload (BIT: BandsintownBulkCreate, 25 rows) → create form (B
 UPDATE      bulk edit (BIT: BandsintownBulkEdit, no past events) → form edit (BZ: BandzoneFormEdit;
             BIT: BandsintownFormEdit, one at a time — past events and refused rows)
 CANCEL      cancel (BZ: BandzoneCancel; BIT: BandsintownCancel = remove "canceled", no past events)
-DELETE      remove (BZ: BandzoneRemove; BIT: BandsintownRemove, no past events) → record forgotten
-REACTIVATE  remove and create again — built by the engine from the platform's remove + create
+            → cancel in the form (BIT: BandsintownFormCancel — past events)
+DELETE      remove (BZ: BandzoneRemove; BIT: BandsintownRemove, no past events)
+            → remove in the form (BIT: BandsintownFormRemove — past events) → record forgotten
+REACTIVATE  remove and create again — built by the engine from the platform's remove (the
+            first of remove / remove in the form that takes the gig) + create
 ```
 
 A step's `refusal(gig)` passes the gig on (also asked at queue time → "Left out: … by hand",
@@ -278,14 +281,20 @@ bzscraper.bandsintown.pacing.min-ms / .max-ms             # human pauses between
 - **When** — rows carry the band's `Slot` when the gig has one (`GigSchedule.showStart/showEnd`),
   else the event's start/end: Bandsintown is about when the artist plays.
 - **Past events** — a published past gig is listed under Past Events, not Upcoming: the
-  create read-back checks the past list too. Deleting a PAST event is not automated (refused,
-  permanent: "delete it by hand"); an event in neither list counts as already removed. Bulk
+  create read-back checks the past list too. The list's "⋯ → Delete" doesn't reach PAST
+  events, so they are removed through the form (below); an event in neither list counts as
+  already removed. Bulk
   edits of past events are refused (`INVALID_START_TIME`) → the form edit does them.
 - **List (import)** — Upcoming + Past tabs' event lists (past is paged: `x-next-page`,
   more load on scroll) → `BitEventMapper` (no entry info on Bandsintown).
 - **Cancel/Delete** — Bandsintown has no cancelled state: both remove the event via the
   row's "⋯" → Delete, reason CANCELED or OTHER. Already-gone = success (so reactivate =
   delete no-op + create). Editing a cancelled gig skips Bandsintown.
+- **Form cancel/remove** (`BandsintownFormCancel`/`BandsintownFormRemove`, `deleteEventInForm`)
+  — past events (and whatever the list refused): the single-page form → Delete opens the same
+  "remove this event?" dialog; its reason, details and Delete are looked up INSIDE the dialog
+  (the form has dropdowns, text areas and a Delete of its own). A form that doesn't open for
+  an event neither list shows = already gone.
 - Replies are read by wrapping `window.fetch` in the page. The row to delete is found by
   its index in the captured event list and checked (city, day) before clicking.
 - **Human pacing** (`HumanPacer`, user requirement): random pauses, real mouse clicks,

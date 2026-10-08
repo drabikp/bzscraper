@@ -440,8 +440,8 @@ final class SeleniumBitSession implements BitSession {
         if (index < 0) {
             pacer.pause();
             if (pastEvents().stream().anyMatch(e -> eventId.equals(idOf(e)))) {
-                throw new BitUploadException("Bandsintown event " + eventId + " is a past event, which this app "
-                        + "can't remove — delete it on Bandsintown by hand (Past Events).", null, true);
+                throw new BitUploadException("Bandsintown event " + eventId + " is a past event, which the event "
+                        + "list can't remove (its form can).", null, true);
             }
             logger.info("Bandsintown event {} is not listed — already removed", eventId);
             return;
@@ -460,9 +460,55 @@ final class SeleniumBitSession implements BitSession {
         pacer.pause();
         pacer.click(driver, driver.findElement(By.cssSelector("[data-bz-kebab]")));
         pacer.click(driver, wait.until(d -> firstVisible(By.xpath("//*[normalize-space(text())='Delete']"))));
+        confirmDelete(eventId, cancelled);
+    }
+
+    @Override
+    public void deleteEventInForm(String eventId, boolean cancelled) throws BitUploadException {
+        try {
+            formDelete(eventId, cancelled);
+        } catch (BitUploadException e) {
+            SeleniumBitPortalClient.saveScreenshot(driver, "form-delete");
+            throw e;
+        } catch (RuntimeException e) {
+            SeleniumBitPortalClient.saveScreenshot(driver, "form-delete");
+            throw new BitUploadException("Bandsintown's form delete failed: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * The event's single-page form (it opens for past events too) → Delete → the same "remove
+     * this event?" dialog as the list's. A form that doesn't open for an event neither list
+     * shows means it is already gone.
+     */
+    private void formDelete(String eventId, boolean cancelled) throws BitUploadException {
+        driver.get(baseUrl + "/artists/" + artistId + "/events/" + eventId + "?version=single-page");
+        try {
+            wait.until(ExpectedConditions.presenceOfElementLocated(By.name("venue_name")));
+        } catch (TimeoutException e) {
+            pacer.pause();
+            if (indexOf(upcomingEvents(), eventId) >= 0 || indexOf(pastEvents(), eventId) >= 0) {
+                throw new BitUploadException("Bandsintown's form for event " + eventId + " didn't open — nothing was "
+                        + "deleted.");
+            }
+            logger.info("Bandsintown event {} is not listed — already removed", eventId);
+            return;
+        }
+        js(CAPTURE_REPLIES);
+        pacer.pause();
+        pacer.click(driver, visibleButton("Delete"));
+        confirmDelete(eventId, cancelled);
+    }
+
+    /**
+     * Bandsintown's "remove this event?" dialog, opened from the list's menu or the form: the
+     * reason, a detail, then the dialog's own Delete. Everything is looked up inside the dialog
+     * — the form behind it has dropdowns, text areas and a Delete button of its own.
+     */
+    private void confirmDelete(String eventId, boolean cancelled) throws BitUploadException {
         wait.until(ExpectedConditions.presenceOfElementLocated(By.name("reason")));
         pacer.pause();
-        pacer.click(driver, driver.findElement(By.cssSelector("button[aria-label='Toggle dropdown']")));
+        pacer.click(driver, deleteDialog().findElement(By.cssSelector("button[aria-label='Toggle dropdown']")));
         String reason = cancelled ? "CANCELED" : "OTHER";
         pacer.click(driver, wait.until(ExpectedConditions.visibilityOfElementLocated(
                 By.cssSelector("li[value='" + reason + "'] button"))));
@@ -470,13 +516,12 @@ final class SeleniumBitSession implements BitSession {
             throw new BitUploadException("Could not pick a reason in Bandsintown's delete dialog — nothing was deleted.");
         }
         pacer.pause();
-        pacer.type(driver, firstVisible(By.tagName("textarea")),
+        pacer.type(driver, deleteDialog().findElement(By.tagName("textarea")),
                 cancelled ? "The concert was cancelled." : "Removed by the band.");
 
         int mark = replyCount();
         pacer.pause();
-        pacer.click(driver, driver.findElement(By.xpath(
-                "//textarea/ancestor::*[.//button[normalize-space()='Delete']][1]//button[normalize-space()='Delete']")));
+        pacer.click(driver, deleteDialog().findElement(By.xpath(".//button[normalize-space()='Delete']")));
         Map<String, Object> reply = awaitReply(mark,
                 r -> !"GET".equals(r.get("method")) && String.valueOf(r.get("url")).contains("/events/" + eventId),
                 "the delete");
@@ -744,6 +789,11 @@ final class SeleniumBitSession implements BitSession {
                     .stream().filter(WebElement::isDisplayed).toList();
             return visible.isEmpty() ? null : visible.getLast();   // dialogs render last
         });
+    }
+
+    /** The delete dialog: the nearest box around its reason field that holds a Delete button (found anew — it re-renders). */
+    private WebElement deleteDialog() {
+        return driver.findElement(By.xpath("//input[@name='reason']/ancestor::*[.//button[normalize-space()='Delete']][1]"));
     }
 
     private WebElement firstVisible(By by) {

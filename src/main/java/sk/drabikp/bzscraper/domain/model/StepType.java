@@ -17,8 +17,12 @@ public enum StepType {
     FORM_EDIT(SyncAction.UPDATE, "form edit"),
     /** Mark the event cancelled (Bandsintown has no cancelled state: its cancel removes it). */
     CANCEL(SyncAction.CANCEL, "cancel"),
+    /** Cancel one event through its own form (Bandsintown: past events, which its list can't). */
+    FORM_CANCEL(SyncAction.CANCEL, "cancel in the form"),
     /** Remove the event from the platform. */
     REMOVE(SyncAction.DELETE, "remove"),
+    /** Remove one event through its own form (Bandsintown: past events, which its list can't). */
+    FORM_REMOVE(SyncAction.DELETE, "remove in the form"),
     /**
      * Bring a cancelled event back: remove the cancelled copy and create it again (Bandzone
      * can't un-cancel). The engine builds it from the platform's remove and create steps.

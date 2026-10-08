@@ -26,6 +26,8 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  *   BIT_LOGIN, BIT_PASSWORD, BIT_TOTP (authenticator secret)  (required)
  *   BIT_CLEANUP_ID  only delete this event id (e.g. one a failed run left behind)
  *   BIT_INSPECT_IDS only print how the portal lists these event ids (comma-separated) — read-only
+ *   BIT_PAST_DELETE=true  instead: create a made-up PAST event (silently), remove it through its
+ *                   form (what the event list can't do) and check that removing it again is a no-op
  *   BIT_HEADLESS (default true), BIT_CHROMIUM (default /usr/bin/chromium),
  *   BIT_CHROMEDRIVER (default /usr/bin/chromedriver), BIT_PROFILE (browser profile dir)
  *
@@ -74,6 +76,30 @@ class SeleniumBitPortalClientLiveTest {
                     Map<String, String> found = ((SeleniumBitSession) session).inspect(ids);
                     ids.forEach(id -> System.out.println("BIT inspect: " + id + " -> "
                             + found.getOrDefault(id, "not listed (upcoming or past)")));
+                }
+            }).doesNotThrowAnyException();
+            return;
+        }
+
+        if (Boolean.parseBoolean(env("BIT_PAST_DELETE", "false"))) {
+            Gig past = new Gig("BZSCRAPER TEST - please ignore",
+                    GigSchedule.startingAt(ZonedDateTime.of(2026, 10, 1, 20, 0, 0, 0, BRATISLAVA)),
+                    new Location("BZSCRAPER TEST VENUE", "Bratislava", Country.SLOVAKIA), List.of(),
+                    Admission.free(), "Automated test event - will be deleted.", null, null, null, false);
+            assertThatCode(() -> {
+                try (BitSession session = client.openSession()) {
+                    List<Created> created = session.createEvents(List.of(past), false);
+                    assertThat(created).singleElement().satisfies(c ->
+                            assertThat(c.error()).as("create error").isNull());
+                    String id = created.getFirst().eventId();
+                    try {
+                        session.deleteEventInForm(id, false);
+                    } finally {
+                        session.deleteEventInForm(id, false);    // already gone: no-op (or the cleanup)
+                    }
+                    Map<String, String> left = ((SeleniumBitSession) session).inspect(List.of(id));
+                    assertThat(left).as("still listed").isEmpty();
+                    System.out.println("BIT live test: created past event " + id + " and removed it through its form");
                 }
             }).doesNotThrowAnyException();
             return;

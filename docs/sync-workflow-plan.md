@@ -85,7 +85,7 @@ Example: Re-sync of 5 gigs — all on Bandzone; on Bandsintown 3 upcoming + 2 pa
 | --- | --- |
 | `GigPublisher` (BZ wizard + edit form; BIT CSV + publish dialog) | publish = create (BIT: batch, BZ: single) → complete (BZ: lineup/poster via edit form) → read back |
 | `GigUpdater` | update = bulk edit (BIT) → form edit (BZ; BIT one at a time: past events, refused rows) → by hand |
-| `GigWithdrawer` CANCEL / DELETE | cancel = cancel (BZ form) / remove (BIT: no cancelled state) → by hand; delete = remove → by hand |
+| `GigWithdrawer` CANCEL / DELETE | cancel = cancel (BZ form; BIT list) → cancel in the form (BIT: past) → by hand; delete = remove (list) → remove in the form (BIT: past) → by hand |
 | `SyncDispatcher.reactivate` (delete + publish) | reactivate = un-cancel (none yet) → remove + create (the composed fallback) |
 | `PlatformCapabilities` / adapter flags | gone: capability = some step accepts the gig |
 
@@ -106,8 +106,11 @@ The outbox tables stay; a run gets "current step" + "next check" columns.
    (`/events/<id>?version=single-page`) for past events and rows the bulk edit refused; the
    venue picked from Bandsintown's own (Google) place search in the gig's town. Verified with
    the one approved real save (SNP, Bratislava → Košice) and then through the engine (bulk
-   edit refused: past → form edit → done). Not yet: a BIT form-remove step for past events
-   (the form has Delete) — deleting a past event stays "by hand".
+   edit refused: past → form edit → done). Then the form cancel / remove
+   (`BandsintownFormCancel` / `BandsintownFormRemove`) after the list's cancel / remove: past
+   events through the form's Delete (same reason dialog — checked read-only with every write
+   blocked, then verified live: a made-up past event created silently and removed through
+   its form; a removed event's form doesn't open → "already gone").
 4. Backlog: Songkick (venue lookup + "needs you", bulk add for future dates, add/edit forms,
    approval wait, locked events → email).
 

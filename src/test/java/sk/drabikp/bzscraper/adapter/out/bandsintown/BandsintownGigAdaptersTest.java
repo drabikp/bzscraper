@@ -21,6 +21,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -124,6 +125,24 @@ class BandsintownGigAdaptersTest {
         assertThat(remove.refusal(upcoming)).isEmpty();
         assertThat(remove.run(List.of(new SyncStep.Item("101", upcoming))))
                 .extracting(StepOutcome::kind).containsExactly(StepOutcome.Kind.FAILED);
+    }
+
+    @Test
+    void the_form_cancel_and_remove_take_past_events_through_the_events_own_form() throws Exception {
+        when(portalClient.openSession()).thenReturn(session);
+        BandsintownFormCancel formCancel = new BandsintownFormCancel(portalClient, clock);
+        BandsintownFormRemove formRemove = new BandsintownFormRemove(portalClient, clock);
+
+        assertThat(formCancel.refusal(gig)).as("2026-09-15 is past").isEmpty();
+        assertThat(formRemove.refusal(gig)).isEmpty();
+        assertThat(formCancel.run(List.of(new SyncStep.Item("101", gig))))
+                .extracting(StepOutcome::kind).containsExactly(StepOutcome.Kind.DONE);
+        assertThat(formRemove.run(List.of(new SyncStep.Item("102", null))))
+                .extracting(StepOutcome::kind).containsExactly(StepOutcome.Kind.DONE);
+
+        verify(session).deleteEventInForm("101", true);
+        verify(session).deleteEventInForm("102", false);
+        verify(session, never()).deleteEvent(any(), anyBoolean());
     }
 
     @Test

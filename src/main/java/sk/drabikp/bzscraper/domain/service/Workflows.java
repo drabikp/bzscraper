@@ -17,8 +17,8 @@ public final class Workflows {
     private static final Map<SyncAction, List<StepType>> STEPS = Map.of(
             SyncAction.PUBLISH, List.of(StepType.BULK_CREATE, StepType.FORM_CREATE),
             SyncAction.UPDATE, List.of(StepType.BULK_EDIT, StepType.FORM_EDIT),
-            SyncAction.CANCEL, List.of(StepType.CANCEL),
-            SyncAction.DELETE, List.of(StepType.REMOVE),
+            SyncAction.CANCEL, List.of(StepType.CANCEL, StepType.FORM_CANCEL),
+            SyncAction.DELETE, List.of(StepType.REMOVE, StepType.FORM_REMOVE),
             SyncAction.REACTIVATE, List.of(StepType.RECREATE));
 
     private Workflows() {

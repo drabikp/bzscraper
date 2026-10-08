@@ -11,7 +11,7 @@ import java.time.Clock;
 public class BandsintownCancel extends BandsintownRemoval {
 
     public BandsintownCancel(BitPortalClient portalClient, Clock clock) {
-        super(portalClient, clock, true);
+        super(portalClient, clock, true, false);
     }
 
     @Override

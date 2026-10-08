@@ -301,6 +301,56 @@ class WorkflowEngineTest {
     }
 
     @Test
+    void a_past_event_the_list_cant_remove_is_cancelled_or_removed_through_its_form() {
+        SyncFakes.Step bitCancel = new SyncFakes.Step(BANDSINTOWN, StepType.CANCEL, 1);
+        SyncFakes.Step bitFormCancel = new SyncFakes.Step(BANDSINTOWN, StepType.FORM_CANCEL, 1);
+        SyncFakes.Step bitRemove = new SyncFakes.Step(BANDSINTOWN, StepType.REMOVE, 1);
+        SyncFakes.Step bitFormRemove = new SyncFakes.Step(BANDSINTOWN, StepType.FORM_REMOVE, 1);
+        bitCancel.refusal = gig -> Optional.of("the list doesn't remove past events");
+        bitRemove.outcome = item -> StepOutcome.refused("a past event — the list can't remove it");
+        Gig past = TestGigs.gig("Summer", "Klub 007");                                    // 2026-09-15
+        gigs.save(past.cancel());
+        published.record(BANDSINTOWN, past.id(), "901");
+        SyncTask cancel = queue(past, BANDSINTOWN, SyncAction.CANCEL);
+        Gig gone = TestGigs.gig("Spring", "Barrák");
+        published.record(BANDSINTOWN, gone.id(), "902");
+        SyncTask delete = queue(gone, BANDSINTOWN, SyncAction.DELETE);   // left the catalog: no refusal asked
+
+        runAll(engine(bitCancel, bitFormCancel, bitRemove, bitFormRemove));
+
+        assertThat(bitCancel.ran()).isEmpty();
+        assertThat(bitFormCancel.ran()).extracting(SyncStep.Item::externalRef).containsExactly("901");
+        assertThat(bitRemove.ran()).extracting(SyncStep.Item::externalRef).containsExactly("902");
+        assertThat(bitFormRemove.ran()).extracting(SyncStep.Item::externalRef).containsExactly("902");
+        assertThat(List.of(after(cancel).status(), after(delete).status())).containsOnly(SyncStatus.DONE);
+        assertThat(published.externalRef(BANDSINTOWN, past.id())).contains("901");
+        assertThat(published.isPublished(BANDSINTOWN, gone.id())).isFalse();
+        assertThat(outbox.log(cancel.id())).extracting(SyncLogEntry::message).anySatisfy(m ->
+                assertThat(m).isEqualTo("cancel: the list doesn't remove past events → cancel in the form"));
+        assertThat(outbox.log(delete.id())).extracting(SyncLogEntry::message).anySatisfy(m ->
+                assertThat(m).contains("a past event — the list can't remove it", "→ remove in the form"));
+    }
+
+    @Test
+    void reactivating_removes_the_cancelled_copy_through_the_form_when_the_list_cant() {
+        SyncFakes.Step bitRemove = new SyncFakes.Step(BANDSINTOWN, StepType.REMOVE, 1);
+        SyncFakes.Step bitFormRemove = new SyncFakes.Step(BANDSINTOWN, StepType.FORM_REMOVE, 1);
+        bitRemove.refusal = gig -> Optional.of("the list doesn't remove past events");
+        bitCreate.outcome = item -> StepOutcome.created("903", null);
+        Gig past = TestGigs.gig("Summer", "Klub 007");
+        gigs.save(past);
+        published.record(BANDSINTOWN, past.id(), "901");
+        SyncTask task = queue(past, BANDSINTOWN, SyncAction.REACTIVATE);
+
+        runAll(engine(bitRemove, bitFormRemove, bitCreate));
+
+        assertThat(bitRemove.ran()).isEmpty();
+        assertThat(bitFormRemove.ran()).extracting(SyncStep.Item::externalRef).containsExactly("901");
+        assertThat(published.externalRef(BANDSINTOWN, past.id())).contains("903");
+        assertThat(after(task).status()).isEqualTo(SyncStatus.DONE);
+    }
+
+    @Test
     void a_platform_without_the_steps_for_an_action_leaves_it_to_the_user() {
         Gig a = upcoming("A");
         gigs.save(a);

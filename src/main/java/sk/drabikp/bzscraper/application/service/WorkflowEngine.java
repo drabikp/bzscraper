@@ -21,8 +21,10 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.BooleanSupplier;
+import java.util.stream.Stream;
 
 /**
  * Runs sync tasks as workflows ({@link Workflows}): each task is a run that goes through
@@ -261,30 +263,32 @@ public class WorkflowEngine implements SyncAdmission {
         if (own.containsKey(type) || type != StepType.RECREATE) {
             return own.get(type);
         }
-        SyncStep remove = own.get(StepType.REMOVE);
+        List<SyncStep> removes = Stream.of(StepType.REMOVE, StepType.FORM_REMOVE)
+                .map(own::get).filter(Objects::nonNull).toList();
         SyncStep create = own.containsKey(StepType.FORM_CREATE) ? own.get(StepType.FORM_CREATE)
                 : own.get(StepType.BULK_CREATE);
-        return remove == null || create == null ? null : new Recreate(remove, create);
+        return removes.isEmpty() || create == null ? null : new Recreate(removes, create);
     }
 
     /**
      * Reactivating where the platform can't un-cancel: the cancelled copy is removed (and its
      * record forgotten at once — from then on, no record means a later Publish creates it),
-     * then the gig is created again; the new id is recorded when this is settled.
+     * then the gig is created again; the new id is recorded when this is settled. The copy is
+     * removed the first of the platform's ways that takes the gig (the list, else the form).
      */
     private final class Recreate implements SyncStep {
 
-        private final SyncStep remove;
+        private final List<SyncStep> removes;
         private final SyncStep create;
 
-        Recreate(SyncStep remove, SyncStep create) {
-            this.remove = remove;
+        Recreate(List<SyncStep> removes, SyncStep create) {
+            this.removes = removes;
             this.create = create;
         }
 
         @Override
         public Platform platform() {
-            return remove.platform();
+            return create.platform();
         }
 
         @Override
@@ -299,7 +303,11 @@ public class WorkflowEngine implements SyncAdmission {
 
         @Override
         public Optional<String> refusal(Gig gig) {
-            return remove.refusal(gig).or(() -> create.refusal(gig));
+            return removing(gig).isPresent() ? create.refusal(gig) : removes.getFirst().refusal(gig);
+        }
+
+        private Optional<SyncStep> removing(Gig gig) {
+            return removes.stream().filter(remove -> remove.refusal(gig).isEmpty()).findFirst();
         }
 
         @Override
@@ -308,6 +316,7 @@ public class WorkflowEngine implements SyncAdmission {
         }
 
         private StepOutcome recreate(Item item) {
+            SyncStep remove = removing(item.gig()).orElse(removes.getLast());
             StepOutcome removed = remove.run(List.of(item)).getFirst();
             if (removed.kind() != StepOutcome.Kind.DONE) {
                 return removed.kind() == StepOutcome.Kind.REFUSED ? removed
