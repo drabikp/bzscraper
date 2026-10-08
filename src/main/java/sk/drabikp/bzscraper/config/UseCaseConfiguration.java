@@ -3,8 +3,11 @@ package sk.drabikp.bzscraper.config;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import sk.drabikp.bzscraper.application.port.out.BandProfileStore;
 import sk.drabikp.bzscraper.application.port.out.BandzonePortalClient;
 import sk.drabikp.bzscraper.application.port.out.BitPortalClient;
+import sk.drabikp.bzscraper.application.port.out.CalendarDecisionStore;
+import sk.drabikp.bzscraper.application.port.out.CalendarFeed;
 import sk.drabikp.bzscraper.application.port.out.GigCsvExporter;
 import sk.drabikp.bzscraper.application.port.out.GigImporter;
 import sk.drabikp.bzscraper.application.port.out.GigProvider;
@@ -16,6 +19,7 @@ import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.application.port.out.Transactions;
 import sk.drabikp.bzscraper.application.service.BandsintownGigPublisher;
 import sk.drabikp.bzscraper.application.service.BandzoneGigPublisher;
+import sk.drabikp.bzscraper.application.service.CalendarReviewService;
 import sk.drabikp.bzscraper.application.service.GigCatalogService;
 import sk.drabikp.bzscraper.application.service.GigCsvExportService;
 import sk.drabikp.bzscraper.application.service.GigImportService;
@@ -23,6 +27,7 @@ import sk.drabikp.bzscraper.application.service.GigPublishingService;
 import sk.drabikp.bzscraper.application.service.GigQueryService;
 import sk.drabikp.bzscraper.application.service.GigResyncService;
 import sk.drabikp.bzscraper.application.service.GigWithdrawalService;
+import sk.drabikp.bzscraper.domain.model.BandProfile;
 
 import java.util.List;
 
@@ -77,5 +82,16 @@ public class UseCaseConfiguration {
     GigResyncService gigResyncService(List<GigPublisher> publishers, List<GigUpdater> updaters,
                                       List<GigWithdrawer> withdrawers, PublishedGigStore publishedGigStore) {
         return new GigResyncService(publishers, updaters, withdrawers, publishedGigStore);
+    }
+
+    @Bean
+    CalendarReviewService calendarReviewService(
+            CalendarFeed feed, BandProfileStore profileStore, CalendarDecisionStore decisionStore,
+            GigRepository gigRepository,
+            @Value("${bzscraper.calendar.gig-score:4}") int gigScore,
+            @Value("${bzscraper.calendar.not-gig-score:-1}") int notGigScore,
+            @Value("${bzscraper.calendar.strong-negative:-4}") int strongNegative) {
+        return new CalendarReviewService(feed, profileStore, decisionStore, gigRepository,
+                new BandProfile.Thresholds(gigScore, notGigScore, strongNegative));
     }
 }

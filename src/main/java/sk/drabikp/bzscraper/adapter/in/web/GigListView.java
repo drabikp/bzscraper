@@ -94,7 +94,8 @@ public class GigListView extends VerticalLayout {
         title.addClassNames(LumoUtility.FontSize.XLARGE);
         HorizontalLayout nav = new HorizontalLayout(
                 new RouterLink("+ Add gig", AddGigView.class),
-                new RouterLink("Import…", ImportView.class));
+                new RouterLink("Import…", ImportView.class),
+                new RouterLink("Calendar…", CalendarView.class));
         nav.setSpacing(true);
 
         grid.setSelectionMode(Grid.SelectionMode.MULTI);
