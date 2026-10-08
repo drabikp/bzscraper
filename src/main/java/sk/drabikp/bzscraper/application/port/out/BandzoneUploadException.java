@@ -8,11 +8,24 @@ package sk.drabikp.bzscraper.application.port.out;
  */
 public class BandzoneUploadException extends Exception {
 
+    private final boolean permanent;
+
     public BandzoneUploadException(String message) {
-        super(message);
+        this(message, null, false);
     }
 
     public BandzoneUploadException(String message, Throwable cause) {
+        this(message, cause, false);
+    }
+
+    /** @param permanent trying again won't help: the platform refused the data, or the platform is switched off */
+    public BandzoneUploadException(String message, Throwable cause, boolean permanent) {
         super(message, cause);
+        this.permanent = permanent;
+    }
+
+    /** Trying again won't help: the platform refused the data, or the platform is switched off. */
+    public boolean permanent() {
+        return permanent;
     }
 }

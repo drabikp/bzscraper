@@ -51,4 +51,16 @@ class BitResponsesTest {
         assertThat(BitResponses.describe(entry)).startsWith("HTTP 401");
         assertThat(BitResponses.ok(null)).isFalse();
     }
+
+    @Test
+    void reads_the_row_errors_bandsintown_refused_an_upload_with() {
+        // live reply (2026-10-08) to an edit of an event in the past
+        Map<String, Object> refused = reply(200, Map.of("status", "ERROR",
+                "error", Map.of("message", List.of(Map.of("row", 2L, "error", "INVALID_START_TIME")))));
+
+        assertThat(BitResponses.ok(refused)).isFalse();
+        assertThat(BitResponses.rowErrors(refused)).containsExactly("INVALID_START_TIME");
+        assertThat(BitResponses.rowErrors(reply(401, Map.of("status", "ERROR")))).isEmpty();
+        assertThat(BitResponses.rowErrors(null)).isEmpty();
+    }
 }

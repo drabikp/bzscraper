@@ -155,7 +155,10 @@ final class SeleniumBitSession implements BitSession {
     private List<Created> createBatch(List<Gig> batch, boolean notifyFollowers) throws BitUploadException {
         Map<String, Object> reply = upload(BandsintownCsv.newEvents(batch, artistName, notifyFollowers));
         if (!BitResponses.ok(reply)) {
-            throw new BitUploadException("Bandsintown rejected the upload — " + BitResponses.describe(reply));
+            List<String> refused = BitResponses.rowErrors(reply);
+            throw refused.isEmpty()
+                    ? new BitUploadException("Bandsintown rejected the upload — " + BitResponses.describe(reply))
+                    : new BitUploadException("Bandsintown refused the events: " + String.join(", ", refused), null, true);
         }
         String[] drafts = BitResponses.draftIds(reply, batch.size());
         String[] existing = BitResponses.updatedIds(reply, batch.size());
@@ -230,6 +233,11 @@ final class SeleniumBitSession implements BitSession {
         if (draft != null) {
             throw new BitUploadException("Bandsintown did not recognise event " + eventId + " and created a new "
                     + "draft " + draft + " instead — delete that draft on Bandsintown.");
+        }
+        List<String> refused = BitResponses.rowErrors(reply);
+        if (!refused.isEmpty()) {
+            throw new BitUploadException("Bandsintown refused the change to event " + eventId + ": "
+                    + String.join(", ", refused), null, true);
         }
         if (!BitResponses.ok(reply) || !eventId.equals(updated)) {
             throw new BitUploadException("Bandsintown did not update event " + eventId + " — "

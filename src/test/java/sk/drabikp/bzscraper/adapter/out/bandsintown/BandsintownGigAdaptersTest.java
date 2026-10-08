@@ -10,6 +10,9 @@ import sk.drabikp.bzscraper.application.port.out.GigWithdrawalException;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.WithdrawAction;
 
+import java.time.ZonedDateTime;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -78,5 +81,20 @@ class BandsintownGigAdaptersTest {
 
         assertThatThrownBy(() -> new BandsintownGigWithdrawer(portalClient).withdraw("101", WithdrawAction.CANCEL))
                 .isInstanceOf(GigWithdrawalException.class).hasMessage("row not found");
+    }
+
+    @Test
+    void a_refusal_is_permanent_and_for_a_past_gig_says_so() throws Exception {
+        when(portalClient.openSession()).thenReturn(session);
+        doThrow(new BitUploadException("Bandsintown refused the change to event 101: INVALID_START_TIME", null, true))
+                .when(session).updateEvent(any(), any());
+        Gig past = TestGigs.gig("Past", "Klub 007", ZonedDateTime.now().minusMonths(1));
+
+        assertThatThrownBy(() -> new BandsintownGigUpdater(portalClient).update("101", past))
+                .isInstanceOfSatisfying(GigUpdateException.class, e -> {
+                    assertThat(e.permanent()).isTrue();
+                    assertThat(e.getMessage())
+                            .contains("INVALID_START_TIME").contains("the gig is in the past");
+                });
     }
 }

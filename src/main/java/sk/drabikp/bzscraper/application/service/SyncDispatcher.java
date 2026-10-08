@@ -64,7 +64,8 @@ public class SyncDispatcher implements DispatchSyncUseCase {
             return new Outcome(false, error == null || error.isBlank() ? "failed without a reason" : error, false);
         }
 
-        static Outcome unsupported(String error) {
+        /** Trying again won't help (not supported, refused by the platform, platform switched off). */
+        static Outcome permanent(String error) {
             return new Outcome(false, error, true);
         }
     }
@@ -154,14 +155,14 @@ public class SyncDispatcher implements DispatchSyncUseCase {
         GigUpdater updater = updaters.get(task.platform());
         Optional<String> ref = publishedGigStore.externalRef(task.platform(), task.gigId());
         if (updater == null || ref.isEmpty()) {
-            return Outcome.unsupported("Updating published gigs on " + SyncRequests.platformName(task.platform())
+            return Outcome.permanent("Updating published gigs on " + SyncRequests.platformName(task.platform())
                     + " is not supported — update it there by hand.");
         }
         try {
             updater.update(ref.get(), gig.get());
             return Outcome.done(null);
         } catch (GigUpdateException e) {
-            return Outcome.failed(e.getMessage());
+            return e.permanent() ? Outcome.permanent(e.getMessage()) : Outcome.failed(e.getMessage());
         }
     }
 
@@ -173,14 +174,14 @@ public class SyncDispatcher implements DispatchSyncUseCase {
         }
         GigWithdrawer withdrawer = withdrawers.get(task.platform());
         if (withdrawer == null) {
-            return Outcome.unsupported("Removing gigs on " + SyncRequests.platformName(task.platform())
+            return Outcome.permanent("Removing gigs on " + SyncRequests.platformName(task.platform())
                     + " is not supported — remove it there by hand.");
         }
         try {
             withdrawer.withdraw(ref.get(), action);
             return Outcome.done(null);
         } catch (GigWithdrawalException e) {
-            return Outcome.failed(e.getMessage());
+            return e.permanent() ? Outcome.permanent(e.getMessage()) : Outcome.failed(e.getMessage());
         }
     }
 
@@ -198,7 +199,7 @@ public class SyncDispatcher implements DispatchSyncUseCase {
         GigWithdrawer withdrawer = withdrawers.get(platform);
         GigPublisher publisher = publishers.get(platform);
         if (withdrawer == null || publisher == null || oldRef.isEmpty()) {
-            return Outcome.unsupported("Reactivating gigs on " + SyncRequests.platformName(platform)
+            return Outcome.permanent("Reactivating gigs on " + SyncRequests.platformName(platform)
                     + " is not supported — reactivate it there by hand.");
         }
         // Delete first: Bandzone would otherwise list two copies of the same gig.
@@ -249,7 +250,7 @@ public class SyncDispatcher implements DispatchSyncUseCase {
         }
         GigPublisher publisher = publishers.get(platform);
         if (publisher == null) {
-            toPublish.keySet().forEach(t -> finish(t, Outcome.unsupported("Publishing on "
+            toPublish.keySet().forEach(t -> finish(t, Outcome.permanent("Publishing on "
                     + SyncRequests.platformName(platform) + " is not supported."), () -> { }));
             return;
         }

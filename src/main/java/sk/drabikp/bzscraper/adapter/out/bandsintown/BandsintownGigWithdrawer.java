@@ -32,7 +32,7 @@ public class BandsintownGigWithdrawer implements GigWithdrawer {
         try (BitSession session = portalClient.openSession()) {
             session.deleteEvent(externalRef, action == WithdrawAction.CANCEL);
         } catch (BitUploadException e) {
-            throw new GigWithdrawalException(e.getMessage(), e);
+            throw new GigWithdrawalException(e.getMessage(), e, e.permanent());
         }
     }
 }

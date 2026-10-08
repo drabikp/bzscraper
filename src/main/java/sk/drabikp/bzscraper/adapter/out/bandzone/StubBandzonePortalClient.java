@@ -26,6 +26,6 @@ public class StubBandzonePortalClient implements BandzonePortalClient {
                 + "is wired. Set bzscraper.bandzone.selenium.enabled=true to publish for real.");
         throw new BandzoneUploadException(
                 "Bandzone publishing is not enabled (set bzscraper.bandzone.selenium.enabled=true "
-                        + "and configure credentials).");
+                        + "and configure credentials).", null, true);
     }
 }

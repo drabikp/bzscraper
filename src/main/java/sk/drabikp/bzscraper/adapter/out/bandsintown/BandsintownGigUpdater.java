@@ -9,6 +9,8 @@ import sk.drabikp.bzscraper.application.port.out.GigUpdater;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.Platform;
 
+import java.time.ZonedDateTime;
+
 /**
  * Edits a Bandsintown event in place by its id. A cancelled gig is skipped: cancelling
  * removed it from Bandsintown, so there is nothing left to edit.
@@ -35,7 +37,9 @@ public class BandsintownGigUpdater implements GigUpdater {
         try (BitSession session = portalClient.openSession()) {
             session.updateEvent(externalRef, gig);
         } catch (BitUploadException e) {
-            throw new GigUpdateException(e.getMessage(), e);
+            String hint = e.permanent() && gig.schedule().start().isBefore(ZonedDateTime.now())
+                    ? " — the gig is in the past, and Bandsintown may not accept changes to past events" : "";
+            throw new GigUpdateException(e.getMessage() + hint, e, e.permanent());
         }
     }
 }

@@ -18,6 +18,6 @@ public class StubBitPortalClient implements BitPortalClient {
     public BitSession openSession() throws BitUploadException {
         throw new BitUploadException("Bandsintown publishing is switched off — set "
                 + "bzscraper.bandsintown.selenium.enabled=true and the bzscraper.bandsintown.login/"
-                + "password/totp-secret.");
+                + "password/totp-secret.", null, true);
     }
 }

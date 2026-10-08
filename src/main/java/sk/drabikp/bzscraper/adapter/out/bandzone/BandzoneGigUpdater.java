@@ -33,12 +33,12 @@ public class BandzoneGigUpdater implements GigUpdater {
         try {
             session = portalClient.openSession();
         } catch (BandzoneUploadException e) {
-            throw new GigUpdateException("Bandzone login failed: " + e.getMessage(), e);
+            throw new GigUpdateException("Bandzone login failed: " + e.getMessage(), e, e.permanent());
         }
         try (session) {
             session.updateGig(externalRef, gig);
         } catch (BandzoneUploadException e) {
-            throw new GigUpdateException(e.getMessage(), e);
+            throw new GigUpdateException(e.getMessage(), e, e.permanent());
         }
     }
 }

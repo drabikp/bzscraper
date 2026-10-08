@@ -33,7 +33,7 @@ public class BandzoneGigWithdrawer implements GigWithdrawer {
         try {
             session = portalClient.openSession();
         } catch (BandzoneUploadException e) {
-            throw new GigWithdrawalException("Bandzone login failed: " + e.getMessage(), e);
+            throw new GigWithdrawalException("Bandzone login failed: " + e.getMessage(), e, e.permanent());
         }
         try (session) {
             switch (action) {
@@ -41,7 +41,7 @@ public class BandzoneGigWithdrawer implements GigWithdrawer {
                 case DELETE -> session.deleteGig(externalRef);
             }
         } catch (BandzoneUploadException e) {
-            throw new GigWithdrawalException(e.getMessage(), e);
+            throw new GigWithdrawalException(e.getMessage(), e, e.permanent());
         }
     }
 }

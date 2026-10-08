@@ -106,8 +106,10 @@ REACTIVATE  delete the cancelled copy → forget → publishNew → record the n
   and REACTIVATE cancel out into an UPDATE; an identity change moves records AND tasks.
 - `SyncRetryPolicy`: UPDATE/CANCEL/DELETE (repeatable) retry after 1, 5, 15 min, then
   FAILED; PUBLISH/REACTIVATE never auto-retry (a failure may have created the event);
-  "not supported" fails at once. After a restart, RUNNING repeatable tasks run again,
-  others go FAILED ("check the platform"). FAILED waits for the user: Retry / Discard on
+  a PERMANENT failure fails at once — "not supported", a platform switched off, or the
+  platform refusing the data (`permanent()` on the platform exceptions; Bandsintown's
+  per-row errors like `INVALID_START_TIME`, seen when editing a past event). After a
+  restart, RUNNING repeatable tasks run again, others go FAILED ("check the platform"). FAILED waits for the user: Retry / Discard on
   `/sync` (`SyncLogView`). `markRunning` only starts a still-PENDING task.
 - UI: actions return a `QueueResult` (shown as "Queued: …"); the catalog's Platforms
   column and a summary line show queued/running/retrying/failed live (`SyncBroadcaster`

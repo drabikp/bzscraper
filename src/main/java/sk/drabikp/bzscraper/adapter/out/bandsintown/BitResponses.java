@@ -51,6 +51,26 @@ final class BitResponses {
     }
 
     /** Short text of a reply, for error messages. */
+    /**
+     * The validation errors Bandsintown reports per CSV row ({@code "INVALID_START_TIME"}),
+     * in a reply like {@code {"status":"ERROR","error":{"message":[{"row":2,"error":"…"}]}}};
+     * empty when there are none. Such a refusal won't change by trying again.
+     */
+    static List<String> rowErrors(Map<String, Object> entry) {
+        Map<String, Object> json = json(entry);
+        if (json == null || !(json.get("error") instanceof Map<?, ?> error)
+                || !(error.get("message") instanceof List<?> rows)) {
+            return List.of();
+        }
+        return rows.stream()
+                .filter(row -> row instanceof Map<?, ?>)
+                .map(row -> ((Map<?, ?>) row).get("error"))
+                .filter(code -> code != null)
+                .map(String::valueOf)
+                .distinct()
+                .toList();
+    }
+
     static String describe(Map<String, Object> entry) {
         if (entry == null) {
             return "no reply";

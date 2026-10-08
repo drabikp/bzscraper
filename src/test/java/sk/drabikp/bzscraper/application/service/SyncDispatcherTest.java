@@ -345,4 +345,23 @@ class SyncDispatcherTest {
                 published, outbox, new SyncFakes.DirectTransactions(), signals, clock))
                 .isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void a_refusal_by_the_platform_is_not_retried() throws Exception {
+        gigs.save(gig);
+        published.record(BANDZONE, gig.id(), "100");
+        published.record(BANDSINTOWN, gig.id(), "900");
+        doThrow(new GigUpdateException("refused: INVALID_START_TIME", null, true)).when(bzUpdater).update(any(), any());
+        doThrow(new GigWithdrawalException("switched off", null, true)).when(bitWithdrawer).withdraw(any(), any());
+        SyncTask update = queue(gig, BANDZONE, SyncAction.UPDATE);
+        SyncTask delete = queue(gig, BANDSINTOWN, SyncAction.DELETE);
+
+        dispatcher().runNext();
+        dispatcher().runNext();
+
+        assertThat(List.of(after(update), after(delete))).allSatisfy(t -> {
+            assertThat(t.status()).isEqualTo(SyncStatus.FAILED);
+            assertThat(t.attempts()).isEqualTo(1);
+        });
+    }
 }
