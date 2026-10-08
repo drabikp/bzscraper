@@ -26,7 +26,8 @@ a REST endpoint (`/gigs/{band_slug}`) still exist.
 Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
 
 - **domain/** — framework-free core.
-  - `model/` — `Gig` aggregate (immutable record; invariants in the compact
+  - `model/` — sync outbox types (`SyncTask`, `SyncAction`, `SyncStatus`, `SyncLogEntry`,
+    `QueueResult`); `Gig` aggregate (immutable record; invariants in the compact
     constructor) built from value objects `GigSchedule`, `Location`, `Admission`;
     identified by `GigId` (start date + normalized venue, or `@` + city when the venue is
     unknown/"TBA" — it **changes** when an edit moves the date or venue). `CityName`
@@ -34,61 +35,85 @@ Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
     `PlatformResult` (outcome of one update/withdraw on one platform),
     `WithdrawAction` (CANCEL/DELETE), `Publication` (a gig's copy on a platform), import
     types (`ImportedGig`, `ImportProposal`, `ImportPlan`, `ImportDecision`,
-    `ImportResult`). `GigSummary` is the legacy scraped record.
+    `ImportResult`), band calendar types (`CalendarEvent`, `BandProfile` of `ProfileRule`s
+    by `RuleKind`/`RuleOrigin`, `CalendarClassification`, `CalendarEventKind`/`Status`).
+    `GigSummary` is the legacy scraped record.
   - `service/` — `ImportPlanner` (multi-platform import plan), `GigMerge`,
-    `GigDateFilter`, `GigSummaryToGigMapper`.
+    `CalendarEventClassifier`, `SyncRetryPolicy`, `GigDateFilter`, `GigSummaryToGigMapper`.
 - **application/** — use cases and the ports they depend on.
   - `port/in/` — catalog (`SaveGig`, `ListGigs`, `UpdateGig`, `CancelGig`,
-    `DeleteGig`), `PublishGigsUseCase`, `WithdrawGigsUseCase`, `ResyncGigUseCase`,
-    `ImportGigsUseCase`, legacy scrape/CSV use cases.
+    `DeleteGig` — each returns what it queued), `PublishGigsUseCase`, `ResyncGigUseCase`,
+    `SyncLogUseCase`, `DispatchSyncUseCase`,
+    `ImportGigsUseCase`, `ReviewCalendarUseCase`, legacy scrape/CSV use cases.
   - `port/out/` — `GigRepository`, `PublishedGigStore`, `Transactions`, per-platform strategies
     `GigPublisher` / `GigUpdater` / `GigWithdrawer` / `GigImporter`,
-    `BandzonePortalClient` + `BandzoneSession`, `BitPortalClient` + `BitSession`, exceptions.
-  - `service/` — `GigCatalogService`, `GigPublishingService` (+ `PublishPartitioner`),
-    `GigResyncService`, `GigWithdrawalService`, `GigImportService`, the publisher
+    `BandzonePortalClient` + `BandzoneSession`, `BitPortalClient` + `BitSession`,
+    `CalendarFeed`, `BandProfileStore`, `CalendarDecisionStore`, `SyncOutbox`, `SyncTrigger`,
+    `SyncNotifier`, exceptions.
+  - `service/` — `GigCatalogService`, `GigPublishingService`, `GigResyncService` (these
+    queue platform work via `SyncRequests`), `SyncDispatcher` (runs it), `SyncLogService`,
+    `GigImportService`, `CalendarReviewService`, the publisher
     strategies `BandzoneGigPublisher` / `BandsintownGigPublisher`, legacy
     `GigQueryService` / `GigCsvExportService`.
 - **adapter/in/** — `web/` Vaadin: `GigListView` (root route; the catalog grid with
-  add/edit/cancel/reactivate/re-sync/delete/publish and a "Published on" column linking
-  each gig's platform page via `PlatformLinks`), `AddGigView`, `ImportView`,
-  `GigForm`, `PublishSummaries`; `rest/` `GigSummaryEndpoint`.
+  add/edit/cancel/reactivate/re-sync/delete/publish and a "Platforms" column linking
+  each gig's platform page via `PlatformLinks` plus its live sync state), `SyncLogView`
+  (`/sync`), `SyncBroadcaster`, `AddGigView`, `ImportView`, `CalendarView`,
+  `GigForm`, `PublishSummaries`; `sync/` `SyncWorker`; `rest/` `GigSummaryEndpoint`.
 - **adapter/out/** — `persistence/` (JPA `GigEntity`/`JpaGigRepository`,
-  `PublishedGigEntity`/`JpaPublishedGigStore`, `SpringTransactions`, `H2ScriptBackup`);
+  `PublishedGigEntity`/`JpaPublishedGigStore`, `JpaBandProfileStore`,
+  `JpaCalendarDecisionStore`, `SpringTransactions`, `H2ScriptBackup`); `calendar/`
+  (`IcsCalendarFeed` + `IcsParser`, `ProfileFile` rule format);
   `bandzone/` (scrape provider + importer, Selenium
   `SeleniumBandzonePortalClient`, `BandzoneLineupPage`, `BandzoneGigUpdater`,
   `BandzoneGigWithdrawer`, `StubBandzonePortalClient`); `csv/` (`OpenCsvGigExporter`, the
   manual-import download); `bandsintown/` (`BandsintownCsv` format, Selenium
   `SeleniumBitPortalClient` + `SeleniumBitSession`, `HumanPacer`, `Totp`,
   `BandsintownGigUpdater`, `BandsintownGigWithdrawer`, `StubBitPortalClient`).
-- **config/** — `UseCaseConfiguration` wires POJO services as `@Bean`s.
+- **config/** — `UseCaseConfiguration` wires POJO services as `@Bean`s; `BandProfileSync`
+  loads the shipped + band calendar rules on start.
 
 Services are plain POJOs wired explicitly in `UseCaseConfiguration`; adapters are
-`@Component`s. Each orchestrator collects its per-platform strategies via an injected
+`@Component`s. `SyncDispatcher` collects its per-platform strategies via an injected
 `List` into an `EnumMap<Platform, …>` (two beans for one platform = startup error), so
 **a new platform is new strategy beans only** — orchestrators and UI don't change.
 
-## Platform sync
+## Platform sync — outbox, eventually consistent
 
-`PublishedGigStore` (table `published_gig`) maps (Platform, GigId) → the platform's
-external id (`externalRef`, e.g. the Bandzone concert id). Orchestrators own the store;
-strategies are pure push.
+The catalog is the source of truth; the platforms follow it **eventually**. Every change
+to a gig that is on a platform, and every Publish, writes its platform work as rows in the
+**sync outbox** (`SyncOutbox`, table `sync_task`, history in `sync_log`) IN THE SAME
+TRANSACTION as the catalog change (`SyncRequests`, called by `GigCatalogService`,
+`GigPublishingService`, `GigResyncService`). The UI never waits for a platform.
+
+`SyncWorker` (one background thread, woken on enqueue + every `bzscraper.sync.poll-seconds`)
+calls `SyncDispatcher.runNext()` until nothing is due — one task at a time:
 
 ```
-publish     GigPublishingService: skip already-published/invalid → GigPublisher.publishNew
-            → record ref for PUBLISHED results only (idempotent re-runs)
-edit        GigCatalogService.update: in ONE transaction replace the gig row and, if the
-            GigId changed, PublishedGigStore.move the records (refs kept); then
-            GigResyncService.pushEdit(gig) → GigUpdater.update(ref, gig) per published
-            platform (no updater → reported "update by hand")
-re-sync     pushEdit(gig) — re-pushes the catalog state
-cancel      GigWithdrawalService → GigWithdrawer.withdraw(ref, CANCEL)
-delete      GigWithdrawer.withdraw(ref, DELETE) → forget the record
-reactivate  GigResyncService.reactivate: Bandzone can't un-cancel, so DELETE the
-            cancelled copy → forget → publishNew → record the new ref
+PUBLISH     a platform's due publishes run as ONE batch (one browser session);
+            record the platform id per PUBLISHED gig (with DONE, one transaction);
+            skipped (DONE + note) if the gig was deleted/cancelled/published meanwhile
+UPDATE      GigUpdater.update(ref, gig as it is NOW) — later edits ride along
+CANCEL      GigWithdrawer.withdraw(ref, CANCEL)
+DELETE      GigWithdrawer.withdraw(ref, DELETE) → forget the record (with DONE)
+REACTIVATE  delete the cancelled copy → forget → publishNew → record the new id
 ```
 
-The UI runs platform work on a `TaskExecutor` and pushes results back via `ui.access`.
-Editing a cancelled gig keeps it cancelled (`GigForm.toGig()` always builds an active gig).
+- Tasks work from the state when they RUN; work that became moot ends DONE with a note.
+- Queueing rules (`SyncRequests`): no second UPDATE while one (or the PUBLISH) is PENDING;
+  delete discards the gig's PENDING tasks and queues DELETE where it is published (the
+  `published_gig` record outlives the catalog row until that succeeds); a pending CANCEL
+  and REACTIVATE cancel out into an UPDATE; an identity change moves records AND tasks.
+- `SyncRetryPolicy`: UPDATE/CANCEL/DELETE (repeatable) retry after 1, 5, 15 min, then
+  FAILED; PUBLISH/REACTIVATE never auto-retry (a failure may have created the event);
+  "not supported" fails at once. After a restart, RUNNING repeatable tasks run again,
+  others go FAILED ("check the platform"). FAILED waits for the user: Retry / Discard on
+  `/sync` (`SyncLogView`). `markRunning` only starts a still-PENDING task.
+- UI: actions return a `QueueResult` (shown as "Queued: …"); the catalog's Platforms
+  column and a summary line show queued/running/retrying/failed live (`SyncBroadcaster`
+  → server push); actions on a gig whose task is RUNNING are blocked.
+- Tests: `bzscraper.sync.worker.enabled=false` (tasks queue, never run); service tests
+  use `SyncFakes` (in-memory outbox/records/repository, mutable clock).
 
 ## Import (`/import`)
 
@@ -104,6 +129,25 @@ on its own). Where versions differ (title/time/venue/city) the user picks which 
 keep (default catalog > Bandzone > Bandsintown); `GigMerge` fills gaps from the other
 versions. `GigImportService.apply` saves + records links in one transaction. Never
 deletes.
+
+## Band calendar (`/calendar`)
+
+Read-only: the band's calendar (private iCal address, `bzscraper.calendar.ical-url` — a
+SECRET, never in git; the local copy lives in the git-ignored `./calendar` file) mixes gigs
+with rehearsals, travel, absences, calls. `CalendarEventClassifier` sorts each event into
+GIG / UNSURE / NOT_GIG with the band's `BandProfile`: weighted `ProfileRule`s — the code
+knows only rule KINDS, every band's words/labels/weights are DATA. Score ≥ 4 gig, ≤ −1
+not a gig (unless there's evidence for a gig and nothing ≤ −4 against), between = the user
+decides; `CATALOG_GIG_SAME_DAY` doesn't count after a strong negative. Status
+(confirmed/tentative/cancelled) comes from separate role rules. The user's verdict per
+event id (`calendar_decision`) always wins. Every matched rule is shown as a reason.
+
+Rules: `classpath:calendar/base.profile` (language-independent) + presets
+(`bzscraper.calendar.presets`, `sk-cz`) are re-synced as PRESET on start; the band's file
+(`bzscraper.calendar.profile-file`, default `./data/calendar-profile.txt` — members' names,
+never in git) as USER rules. Format: `KIND weight value|alternatives`. Steps 2–3
+(learning the profile from platform history, setup wizard for any band) are planned in
+`docs/calendar-plan.md`. Calendar notes hold fees/phones — never publish them.
 
 ## Bandzone (Selenium)
 
@@ -171,7 +215,7 @@ H2 file DB at `./data/bzscraper-gigs` (`bzscraper.db.path`). The schema is owned
 **Flyway** (`src/main/resources/db/migration/V<n>__*.sql`); Hibernate runs with
 `ddl-auto=validate`, so every entity change needs a new migration (tests run the
 migrations on an in-memory H2 and fail on a mismatch). A pre-Flyway database is
-baselined at V1. V3 re-keys venue-less gigs (and their publications) to the `@city` identity. The H2 version is pinned in `pom.xml` (`h2.version`) because its file
+baselined at V1. V3 re-keys venue-less gigs (and their publications) to the `@city` identity; V4 adds the band-calendar tables (`calendar_rule`, `calendar_decision`); V5 the sync outbox (`sync_task`, `sync_log`). The H2 version is pinned in `pom.xml` (`h2.version`) because its file
 format changes between versions. `H2ScriptBackup` writes a plain-SQL `SCRIPT` backup on
 every start to `./data/backups` (one per day, newest 14 kept); restore with
 `org.h2.tools.RunScript`.
@@ -202,3 +246,7 @@ against a test band.
 WITHOUT notifying followers), edits it and deletes it. Skipped unless `BIT_LIVE=true`;
 reads `BIT_LOGIN` / `BIT_PASSWORD` / `BIT_TOTP`; `BIT_CLEANUP_ID=<id>` only deletes a
 leftover event. There is no Bandsintown test artist — the event is public for ~1 minute.
+
+`CalendarClassificationLiveTest` prints how the shipped + band rules sort the REAL
+calendar (read-only). Skipped unless `CAL_LIVE=true`; reads `CAL_URL`, optional
+`CAL_PROFILE` (band rules file) and `CAL_CATALOG_DAYS` (file of ISO dates with gigs).

@@ -16,6 +16,9 @@ import sk.drabikp.bzscraper.application.port.out.GigRepository;
 import sk.drabikp.bzscraper.application.port.out.GigUpdater;
 import sk.drabikp.bzscraper.application.port.out.GigWithdrawer;
 import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
+import sk.drabikp.bzscraper.application.port.out.SyncNotifier;
+import sk.drabikp.bzscraper.application.port.out.SyncOutbox;
+import sk.drabikp.bzscraper.application.port.out.SyncTrigger;
 import sk.drabikp.bzscraper.application.port.out.Transactions;
 import sk.drabikp.bzscraper.application.service.BandsintownGigPublisher;
 import sk.drabikp.bzscraper.application.service.BandzoneGigPublisher;
@@ -26,9 +29,12 @@ import sk.drabikp.bzscraper.application.service.GigImportService;
 import sk.drabikp.bzscraper.application.service.GigPublishingService;
 import sk.drabikp.bzscraper.application.service.GigQueryService;
 import sk.drabikp.bzscraper.application.service.GigResyncService;
-import sk.drabikp.bzscraper.application.service.GigWithdrawalService;
+import sk.drabikp.bzscraper.application.service.SyncDispatcher;
+import sk.drabikp.bzscraper.application.service.SyncLogService;
+import sk.drabikp.bzscraper.application.service.SyncRequests;
 import sk.drabikp.bzscraper.domain.model.BandProfile;
 
+import java.time.Clock;
 import java.util.List;
 
 @Configuration
@@ -57,14 +63,25 @@ public class UseCaseConfiguration {
     }
 
     @Bean
-    GigPublishingService gigPublishingService(List<GigPublisher> publishers, PublishedGigStore publishedGigStore) {
-        return new GigPublishingService(publishers, publishedGigStore);
+    Clock clock() {
+        return Clock.systemDefaultZone();
+    }
+
+    @Bean
+    SyncRequests syncRequests(SyncOutbox outbox, PublishedGigStore publishedGigStore, SyncTrigger trigger,
+                              SyncNotifier notifier, Clock clock) {
+        return new SyncRequests(outbox, publishedGigStore, trigger, notifier, clock);
+    }
+
+    @Bean
+    GigPublishingService gigPublishingService(SyncRequests syncRequests, Transactions transactions) {
+        return new GigPublishingService(syncRequests, transactions);
     }
 
     @Bean
     GigCatalogService gigCatalogService(GigRepository gigRepository, PublishedGigStore publishedGigStore,
-                                        Transactions transactions) {
-        return new GigCatalogService(gigRepository, publishedGigStore, transactions);
+                                        Transactions transactions, SyncRequests syncRequests) {
+        return new GigCatalogService(gigRepository, publishedGigStore, transactions, syncRequests);
     }
 
     @Bean
@@ -74,14 +91,23 @@ public class UseCaseConfiguration {
     }
 
     @Bean
-    GigWithdrawalService gigWithdrawalService(List<GigWithdrawer> withdrawers, PublishedGigStore publishedGigStore) {
-        return new GigWithdrawalService(withdrawers, publishedGigStore);
+    GigResyncService gigResyncService(GigRepository gigRepository, SyncRequests syncRequests,
+                                      Transactions transactions) {
+        return new GigResyncService(gigRepository, syncRequests, transactions);
     }
 
     @Bean
-    GigResyncService gigResyncService(List<GigPublisher> publishers, List<GigUpdater> updaters,
-                                      List<GigWithdrawer> withdrawers, PublishedGigStore publishedGigStore) {
-        return new GigResyncService(publishers, updaters, withdrawers, publishedGigStore);
+    SyncDispatcher syncDispatcher(List<GigPublisher> publishers, List<GigUpdater> updaters,
+                                  List<GigWithdrawer> withdrawers, GigRepository gigRepository,
+                                  PublishedGigStore publishedGigStore, SyncOutbox outbox, Transactions transactions,
+                                  SyncNotifier notifier, Clock clock) {
+        return new SyncDispatcher(publishers, updaters, withdrawers, gigRepository, publishedGigStore, outbox,
+                transactions, notifier, clock);
+    }
+
+    @Bean
+    SyncLogService syncLogService(SyncOutbox outbox, SyncTrigger trigger, SyncNotifier notifier, Clock clock) {
+        return new SyncLogService(outbox, trigger, notifier, clock);
     }
 
     @Bean

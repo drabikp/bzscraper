@@ -1,26 +1,15 @@
 package sk.drabikp.bzscraper.application.port.in;
 
-import sk.drabikp.bzscraper.domain.model.Gig;
-import sk.drabikp.bzscraper.domain.model.PlatformResult;
+import sk.drabikp.bzscraper.domain.model.GigId;
+import sk.drabikp.bzscraper.domain.model.QueueResult;
 
-import java.util.List;
+import java.util.Collection;
 
 /**
- * Pushes catalog changes of a gig to every platform it was published to. Platforms
- * where the gig was never published are skipped; each method returns one result per
- * platform actually contacted.
+ * Queues an update of the gigs' platform copies to their current catalog details — for
+ * when a platform copy was changed by hand or an earlier update was given up on.
  */
 public interface ResyncGigUseCase {
 
-    /**
-     * Overwrites the platform copies with the gig's current catalog details. Call it after
-     * the catalog update, which has already moved the published records to {@code gig.id()}.
-     */
-    List<PlatformResult> pushEdit(Gig gig);
-
-    /**
-     * Makes the platform copies of a gig that was cancelled there active again.
-     * {@code gig} is the reactivated (not cancelled) catalog gig.
-     */
-    List<PlatformResult> reactivate(Gig gig);
+    QueueResult resync(Collection<GigId> gigs);
 }

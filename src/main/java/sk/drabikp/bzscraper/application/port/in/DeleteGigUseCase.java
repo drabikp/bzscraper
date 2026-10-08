@@ -1,9 +1,14 @@
 package sk.drabikp.bzscraper.application.port.in;
 
 import sk.drabikp.bzscraper.domain.model.GigId;
+import sk.drabikp.bzscraper.domain.model.QueueResult;
 
-/** Removes a gig from the local catalog. */
+/**
+ * Removes a gig from the catalog and queues its deletion on every platform it is on (in
+ * the same transaction). The gig's platform record stays until that deletion succeeds,
+ * so the platform copy can still be found.
+ */
 public interface DeleteGigUseCase {
 
-    void delete(GigId id);
+    QueueResult delete(GigId id);
 }
