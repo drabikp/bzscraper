@@ -312,4 +312,26 @@ class WorkflowEngineTest {
         assertThat(after(reactivate).status()).isEqualTo(SyncStatus.FAILED);
         assertThat(after(reactivate).message()).contains("do it there by hand", "remove and create again: none for Bandsintown");
     }
+
+    @Test
+    void pausing_lets_the_gig_in_progress_finish_and_leaves_the_rest_queued() {
+        List<SyncTask> tasks = new ArrayList<>();
+        for (String title : List.of("A", "B", "C")) {
+            tasks.add(edit(upcoming(title), BANDZONE));
+        }
+        boolean[] paused = {false};
+        bzForm.outcome = item -> {
+            paused[0] = true;                       // the user pauses while the first gig runs
+            return StepOutcome.done(null);
+        };
+        WorkflowEngine engine = new WorkflowEngine(List.of(bzForm), gigs, published, outbox,
+                new SyncFakes.DirectTransactions(), signals, clock, () -> paused[0]);
+
+        engine.runFrom(tasks.getFirst());           // moves all to the form step
+        engine.runFrom(after(tasks.getFirst()));
+
+        assertThat(bzForm.calls).hasSize(1);
+        assertThat(tasks).extracting(t -> after(t).status())
+                .containsExactly(SyncStatus.DONE, SyncStatus.PENDING, SyncStatus.PENDING);
+    }
 }

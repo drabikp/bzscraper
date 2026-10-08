@@ -22,6 +22,7 @@ import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.BooleanSupplier;
 
 /**
  * Runs sync tasks as workflows ({@link Workflows}): each task is a run that goes through
@@ -55,9 +56,17 @@ public class WorkflowEngine implements SyncAdmission {
     private final Transactions transactions;
     private final SyncNotifier notifier;
     private final Clock clock;
+    private final BooleanSupplier paused;
 
     public WorkflowEngine(List<SyncStep> steps, GigRepository gigRepository, PublishedGigStore publishedGigStore,
                           SyncOutbox outbox, Transactions transactions, SyncNotifier notifier, Clock clock) {
+        this(steps, gigRepository, publishedGigStore, outbox, transactions, notifier, clock, () -> false);
+    }
+
+    /** {@code paused}: checked before each batch — the gig in progress finishes, the rest stays queued. */
+    public WorkflowEngine(List<SyncStep> steps, GigRepository gigRepository, PublishedGigStore publishedGigStore,
+                          SyncOutbox outbox, Transactions transactions, SyncNotifier notifier, Clock clock,
+                          BooleanSupplier paused) {
         for (SyncStep step : steps) {
             if (this.steps.computeIfAbsent(step.platform(), p -> new EnumMap<>(StepType.class))
                     .put(step.type(), step) != null) {
@@ -70,6 +79,7 @@ public class WorkflowEngine implements SyncAdmission {
         this.transactions = transactions;
         this.notifier = notifier;
         this.clock = clock;
+        this.paused = paused;
     }
 
     @Override
@@ -97,7 +107,7 @@ public class WorkflowEngine implements SyncAdmission {
                 items.add(item.get());
             }
         }
-        for (int from = 0; from < runs.size(); from += step.batchSize()) {
+        for (int from = 0; from < runs.size() && !paused.getAsBoolean(); from += step.batchSize()) {
             int to = Math.min(runs.size(), from + step.batchSize());
             runBatch(step, runs.subList(from, to), items.subList(from, to));
         }

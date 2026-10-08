@@ -30,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 /**
@@ -119,11 +120,11 @@ final class SeleniumBitSession implements BitSession {
     private final String baseUrl;
     private final String artistId;
     private final String artistName;
-    private final Runnable release;
+    private final Consumer<WebDriver> release;
     private boolean closed;
 
     SeleniumBitSession(WebDriver driver, WebDriverWait wait, HumanPacer pacer, String baseUrl,
-                       String artistId, String artistName, Runnable release) {
+                       String artistId, String artistName, Consumer<WebDriver> release) {
         this.driver = driver;
         this.wait = wait;
         this.pacer = pacer;
@@ -466,13 +467,7 @@ final class SeleniumBitSession implements BitSession {
             return;
         }
         closed = true;
-        try {
-            driver.quit();
-        } catch (RuntimeException e) {
-            logger.debug("Closing the Bandsintown browser failed", e);
-        } finally {
-            release.run();
-        }
+        release.accept(driver);                     // kept open a little for the next session
     }
 
     // --- shared steps ---

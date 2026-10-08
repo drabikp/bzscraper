@@ -68,4 +68,21 @@ class SyncDispatcherTest {
         assertThat(outbox.find(publish.id()).orElseThrow().status()).isEqualTo(SyncStatus.FAILED);
         assertThat(outbox.find(publish.id()).orElseThrow().message()).contains("check there, then Retry or Discard");
     }
+
+    @Test
+    void a_paused_sync_starts_nothing_until_resumed() {
+        published.record(BANDZONE, gig.id(), "100");
+        queue(gig, BANDZONE, SyncAction.DELETE);
+        SyncPause pause = new SyncPause(signals, signals);
+        SyncDispatcher pausable = new SyncDispatcher(new WorkflowEngine(List.of(bzRemove), gigs, published, outbox,
+                new SyncFakes.DirectTransactions(), signals, clock, pause::paused), outbox, signals, clock, pause);
+
+        pause.pause();
+        assertThat(pausable.runNext()).isFalse();
+        assertThat(bzRemove.calls).isEmpty();
+
+        pause.resume();
+        assertThat(pausable.runNext()).isTrue();
+        assertThat(signals.wakes).as("resuming wakes the worker").isPositive();
+    }
 }

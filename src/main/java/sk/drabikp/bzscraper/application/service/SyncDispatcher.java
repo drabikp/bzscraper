@@ -1,6 +1,7 @@
 package sk.drabikp.bzscraper.application.service;
 
 import sk.drabikp.bzscraper.application.port.in.DispatchSyncUseCase;
+import sk.drabikp.bzscraper.application.port.in.PauseSyncUseCase;
 import sk.drabikp.bzscraper.application.port.out.SyncNotifier;
 import sk.drabikp.bzscraper.application.port.out.SyncOutbox;
 import sk.drabikp.bzscraper.domain.model.SyncTask;
@@ -23,16 +24,27 @@ public class SyncDispatcher implements DispatchSyncUseCase {
     private final SyncOutbox outbox;
     private final SyncNotifier notifier;
     private final Clock clock;
+    private final PauseSyncUseCase pause;
 
-    public SyncDispatcher(WorkflowEngine engine, SyncOutbox outbox, SyncNotifier notifier, Clock clock) {
+    public SyncDispatcher(WorkflowEngine engine, SyncOutbox outbox, SyncNotifier notifier, Clock clock,
+                          PauseSyncUseCase pause) {
         this.engine = engine;
         this.outbox = outbox;
         this.notifier = notifier;
         this.clock = clock;
+        this.pause = pause;
+    }
+
+    /** Never paused (tests). */
+    public SyncDispatcher(WorkflowEngine engine, SyncOutbox outbox, SyncNotifier notifier, Clock clock) {
+        this(engine, outbox, notifier, clock, new SyncPause(() -> { }, () -> { }));
     }
 
     @Override
     public boolean runNext() {
+        if (pause.paused()) {
+            return false;
+        }
         Optional<SyncTask> next = outbox.nextDue(clock.instant());
         next.ifPresent(engine::runFrom);
         return next.isPresent();

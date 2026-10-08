@@ -96,9 +96,9 @@ The outbox tables stay; a run gets "current step" + "next check" columns.
 1. Read-only check: does Bandsintown's edit form open (and allow changes) for a past event?
 2. **Done (2026-10-08):** engine core (`WorkflowEngine`, `SyncStep`, `sync_task.step`) + the
    **update** workflow; Bandzone (form edit) and Bandsintown (bulk edit) on it. The edit form
-   as a Bandsintown fallback waits for step 1. Not yet: a session shared by a platform's
-   steps in one pass (each step opens its own; the saved login keeps that cheap), "waiting"
-   and "needs you" outcomes, a Stop button.
+   as a Bandsintown fallback waits for step 1. Since then: a warm browser shared across a
+   platform's steps and tasks, and Pause / Resume on `/sync`. Not yet: "waiting" and "needs
+   you" outcomes — no step needs them until Songkick (approval wait, venue choice).
 3. **Done (2026-10-08):** publish (bulk upload → create form), cancel, delete (remove) and
    reactivate (remove and create again, built from the platform's steps) moved onto it; the
    old publisher/withdrawer adapters and capability flags are gone. Verified live end to end

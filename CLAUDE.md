@@ -126,6 +126,11 @@ its own). Moot work (gig deleted/cancelled/published meanwhile) ends done with a
 - A new task REPLACES the gig's FAILED tasks it redoes on that platform (`replaceFailed`):
   a new publish the failed publish, a new update the failed update, a delete the failed
   updates/cancels (never a failed publish — it may have created the event; the user checks).
+- **Pause / Resume** on `/sync` (`PauseSyncUseCase`, `SyncPause`, in memory): the gig in
+  progress finishes, nothing new starts, the waiting work stays queued.
+- **Warm browser** (`WarmBrowser`): a platform's browser stays open ~60 s after a session, so
+  the next step or task takes it over (one start + login check per run, not per gig); closed
+  when idle and on shutdown; still one browser per platform at a time.
 - UI: actions return a `QueueResult` (shown as "Queued: …"); the catalog's Platforms
   column and a summary line show queued/running/retrying/failed live (`SyncBroadcaster`
   → server push); actions on a gig whose task is RUNNING are blocked.

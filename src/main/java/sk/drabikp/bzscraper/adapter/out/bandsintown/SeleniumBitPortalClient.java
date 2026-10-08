@@ -1,5 +1,6 @@
 package sk.drabikp.bzscraper.adapter.out.bandsintown;
 
+import jakarta.annotation.PreDestroy;
 import org.openqa.selenium.By;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.OutputType;
@@ -18,6 +19,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import sk.drabikp.bzscraper.adapter.out.browser.BrowserProfile;
+import sk.drabikp.bzscraper.adapter.out.browser.WarmBrowser;
 import sk.drabikp.bzscraper.application.port.out.BitPortalClient;
 import sk.drabikp.bzscraper.application.port.out.BitSession;
 import sk.drabikp.bzscraper.application.port.out.BitUploadException;
@@ -88,6 +90,8 @@ public class SeleniumBitPortalClient implements BitPortalClient {
     private final HumanPacer pacer;
     /** One browser at a time: a person has one tab open, and the profile can't be shared. */
     private final Semaphore oneBrowser = new Semaphore(1);
+    /** The browser stays open a minute after a step, for the next one (one login per run). */
+    private final WarmBrowser warm = new WarmBrowser(oneBrowser, Duration.ofSeconds(60), "bandsintown");
 
     public SeleniumBitPortalClient(
             @Value("${bzscraper.bandsintown.base-url:https://artists.bandsintown.com}") String baseUrl,
@@ -130,10 +134,16 @@ public class SeleniumBitPortalClient implements BitPortalClient {
         acquireBrowser();
         WebDriver driver = null;
         try {
-            driver = newDriver();
+            driver = warm.take();
+            if (driver == null) {
+                driver = newDriver();
+            }
             WebDriverWait wait = new WebDriverWait(driver, WAIT);
             String artistId = logIn(driver, wait);
-            return new SeleniumBitSession(driver, wait, pacer, baseUrl, artistId, artistName, oneBrowser::release);
+            return new SeleniumBitSession(driver, wait, pacer, baseUrl, artistId, artistName, done -> {
+                warm.park(done);
+                oneBrowser.release();
+            });
         } catch (BitUploadException | RuntimeException e) {
             if (driver != null) {
                 saveScreenshot(driver, "login");
@@ -145,6 +155,11 @@ public class SeleniumBitPortalClient implements BitPortalClient {
             }
             throw new BitUploadException("Bandsintown login failed: " + e.getMessage(), e);
         }
+    }
+
+    @PreDestroy
+    void closeBrowser() {
+        warm.close();
     }
 
     private void acquireBrowser() throws BitUploadException {

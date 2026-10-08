@@ -1,5 +1,6 @@
 package sk.drabikp.bzscraper.adapter.out.bandzone;
 
+import jakarta.annotation.PreDestroy;
 import org.openqa.selenium.By;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.TimeoutException;
@@ -16,6 +17,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import sk.drabikp.bzscraper.adapter.out.browser.BrowserProfile;
+import sk.drabikp.bzscraper.adapter.out.browser.WarmBrowser;
 import sk.drabikp.bzscraper.application.port.out.BandzonePortalClient;
 import sk.drabikp.bzscraper.application.port.out.BandzoneSession;
 import sk.drabikp.bzscraper.application.port.out.BandzoneUploadException;
@@ -39,6 +41,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -75,6 +78,8 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
     private final Path profileDir;
     private final String passwordStore;
     private final Semaphore oneBrowser = new Semaphore(1);
+    /** The browser stays open a minute after a step, for the next one (one login per run). */
+    private final WarmBrowser warm = new WarmBrowser(oneBrowser, Duration.ofSeconds(60), "bandzone");
 
     public SeleniumBandzonePortalClient(
             @Value("${bzscraper.bandzone.base-url:https://bandzone.cz}") String baseUrl,
@@ -106,7 +111,10 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
         acquireBrowser();
         WebDriver driver = null;
         try {
-            driver = newDriver();
+            driver = warm.take();
+            if (driver == null) {
+                driver = newDriver();
+            }
             WebDriverWait wait = new WebDriverWait(driver, WAIT);
             if (loggedIn(driver)) {
                 logger.info("Bandzone: reusing the saved login");
@@ -114,7 +122,10 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
                 logIn(driver, wait);
             }
             dismissCookies(driver);
-            return new SeleniumBandzoneSession(driver, wait, baseUrl, bandSlug, oneBrowser::release);
+            return new SeleniumBandzoneSession(driver, wait, baseUrl, bandSlug, done -> {
+                warm.park(done);
+                oneBrowser.release();
+            });
         } catch (BandzoneUploadException | RuntimeException e) {
             if (driver != null) {
                 driver.quit();
@@ -125,6 +136,11 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
             }
             throw new BandzoneUploadException("Bandzone login failed: " + e.getMessage(), e);
         }
+    }
+
+    @PreDestroy
+    void closeBrowser() {
+        warm.close();
     }
 
     private void acquireBrowser() throws BandzoneUploadException {
@@ -210,11 +226,11 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
         private final WebDriverWait wait;
         private final String baseUrl;
         private final String bandSlug;
-        private final Runnable onClose;
+        private final Consumer<WebDriver> onClose;
         private String ownBandName; // read once per session from the band's profile
 
         SeleniumBandzoneSession(WebDriver driver, WebDriverWait wait, String baseUrl, String bandSlug,
-                                Runnable onClose) {
+                                Consumer<WebDriver> onClose) {
             this.driver = driver;
             this.wait = wait;
             this.baseUrl = baseUrl;
@@ -340,13 +356,10 @@ public class SeleniumBandzonePortalClient implements BandzonePortalClient {
             }
         }
 
+        /** Hands the browser back (kept open a little for the next session) — see {@link WarmBrowser}. */
         @Override
         public void close() {
-            try {
-                driver.quit();
-            } finally {
-                onClose.run();
-            }
+            onClose.accept(driver);
         }
 
         private void openWizard() {

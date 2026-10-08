@@ -29,6 +29,7 @@ import sk.drabikp.bzscraper.application.service.GigResyncService;
 import sk.drabikp.bzscraper.application.service.PlaceService;
 import sk.drabikp.bzscraper.application.service.SyncDispatcher;
 import sk.drabikp.bzscraper.application.service.SyncLogService;
+import sk.drabikp.bzscraper.application.service.SyncPause;
 import sk.drabikp.bzscraper.application.service.SyncRequests;
 import sk.drabikp.bzscraper.application.service.WorkflowEngine;
 import sk.drabikp.bzscraper.domain.model.BandProfile;
@@ -63,8 +64,9 @@ public class UseCaseConfiguration {
     @Bean
     WorkflowEngine workflowEngine(List<SyncStep> steps, GigRepository gigRepository,
                                   PublishedGigStore publishedGigStore, SyncOutbox outbox, Transactions transactions,
-                                  SyncNotifier notifier, Clock clock) {
-        return new WorkflowEngine(steps, gigRepository, publishedGigStore, outbox, transactions, notifier, clock);
+                                  SyncNotifier notifier, Clock clock, SyncPause syncPause) {
+        return new WorkflowEngine(steps, gigRepository, publishedGigStore, outbox, transactions, notifier, clock,
+                syncPause::paused);
     }
 
     @Bean
@@ -98,9 +100,14 @@ public class UseCaseConfiguration {
     }
 
     @Bean
+    SyncPause syncPause(SyncTrigger trigger, SyncNotifier notifier) {
+        return new SyncPause(trigger, notifier);
+    }
+
+    @Bean
     SyncDispatcher syncDispatcher(WorkflowEngine workflowEngine, SyncOutbox outbox, SyncNotifier notifier,
-                                  Clock clock) {
-        return new SyncDispatcher(workflowEngine, outbox, notifier, clock);
+                                  Clock clock, SyncPause syncPause) {
+        return new SyncDispatcher(workflowEngine, outbox, notifier, clock, syncPause);
     }
 
     @Bean

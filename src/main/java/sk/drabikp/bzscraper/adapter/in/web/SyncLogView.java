@@ -6,6 +6,7 @@ import com.vaadin.flow.component.DetachEvent;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
+import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.grid.GridVariant;
 import com.vaadin.flow.component.html.Div;
@@ -22,6 +23,7 @@ import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
 import com.vaadin.flow.shared.Registration;
 import com.vaadin.flow.theme.lumo.LumoUtility;
+import sk.drabikp.bzscraper.application.port.in.PauseSyncUseCase;
 import sk.drabikp.bzscraper.application.port.in.SyncLogUseCase;
 import sk.drabikp.bzscraper.domain.model.SyncLogEntry;
 import sk.drabikp.bzscraper.domain.model.SyncStatus;
@@ -46,14 +48,18 @@ public class SyncLogView extends VerticalLayout {
     private static final String ALL = "All (last " + LIMIT + ")";
 
     private final SyncLogUseCase syncLog;
+    private final PauseSyncUseCase pause;
     private final SyncBroadcaster broadcaster;
+    private final Button pauseButton = new Button();
+    private final Span pausedNote = new Span();
     private final Grid<SyncTask> grid = new Grid<>();
     private final Select<String> show = new Select<>();
     private final Set<Long> expanded = new HashSet<>();
     private Registration syncRegistration;
 
-    public SyncLogView(SyncLogUseCase syncLog, SyncBroadcaster broadcaster) {
+    public SyncLogView(SyncLogUseCase syncLog, PauseSyncUseCase pause, SyncBroadcaster broadcaster) {
         this.syncLog = syncLog;
+        this.pause = pause;
         this.broadcaster = broadcaster;
 
         setSizeFull();
@@ -86,7 +92,19 @@ public class SyncLogView extends VerticalLayout {
         grid.addItemClickListener(e -> toggle(e.getItem()));
         grid.setItemDetailsRenderer(new ComponentRenderer<>(this::history));
 
-        add(title, new RouterLink("← Catalog", GigListView.class), intro, show, grid);
+        pauseButton.addClickListener(e -> {
+            if (pause.paused()) {
+                pause.resume();
+            } else {
+                pause.pause();
+            }
+            refresh();
+        });
+        pausedNote.addClassNames(LumoUtility.TextColor.WARNING, LumoUtility.FontWeight.SEMIBOLD);
+        HorizontalLayout controls = new HorizontalLayout(show, pauseButton, pausedNote);
+        controls.setAlignItems(FlexComponent.Alignment.END);
+
+        add(title, new RouterLink("← Catalog", GigListView.class), intro, controls, grid);
         setFlexGrow(1, grid);
         refresh();
     }
@@ -107,6 +125,11 @@ public class SyncLogView extends VerticalLayout {
     }
 
     private void refresh() {
+        boolean paused = pause.paused();
+        pauseButton.setText(paused ? "Resume sync" : "Pause sync");
+        pauseButton.getElement().setProperty("title", paused ? "Start the waiting work again"
+                : "Finish the gig in progress, then start nothing new until resumed");
+        pausedNote.setText(paused ? "Paused — the waiting work stays queued" : "");
         List<SyncTask> tasks = switch (show.getValue()) {
             case UNFINISHED -> syncLog.unfinished().stream().filter(t -> t.status().open()).toList().reversed();
             case NEEDS_YOU -> syncLog.unfinished().stream().filter(t -> t.status() == SyncStatus.FAILED)
