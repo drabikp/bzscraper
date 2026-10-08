@@ -121,8 +121,6 @@ class WorkflowEngineTest {
         assertThat(engine(bitBulk).leftOut(BANDSINTOWN, SyncAction.UPDATE, TestGigs.gig("Summer", "Klub 007")))
                 .as("said when queueing too").contains(after(past).message());
         assertThat(engine(bitBulk).leftOut(BANDSINTOWN, SyncAction.UPDATE, upcoming("Winter"))).isEmpty();
-        assertThat(engine(bitBulk).leftOut(BANDSINTOWN, SyncAction.CANCEL, upcoming("Winter")))
-                .as("not a workflow action").isEmpty();
     }
 
     @Test
@@ -192,5 +190,126 @@ class WorkflowEngineTest {
     void a_step_type_is_implemented_at_most_once_per_platform() {
         assertThatThrownBy(() -> engine(bzForm, new SyncFakes.Step(BANDZONE, StepType.FORM_EDIT, 1)))
                 .isInstanceOf(IllegalStateException.class);
+    }
+
+    // --- publish, cancel, delete, reactivate ---
+
+    private final SyncFakes.Step bitCreate = new SyncFakes.Step(BANDSINTOWN, StepType.BULK_CREATE, 25);
+    private final SyncFakes.Step bzCreate = new SyncFakes.Step(BANDZONE, StepType.FORM_CREATE, 1);
+    private final SyncFakes.Step bzCancel = new SyncFakes.Step(BANDZONE, StepType.CANCEL, 1);
+    private final SyncFakes.Step bzRemove = new SyncFakes.Step(BANDZONE, StepType.REMOVE, 1);
+
+    private SyncTask queue(Gig gig, Platform platform, SyncAction action) {
+        return outbox.enqueue(gig.id(), SyncTask.labelOf(gig), platform, action, clock.instant());
+    }
+
+    @Test
+    void due_publishes_go_in_one_upload_and_each_new_id_is_recorded() {
+        Gig a = upcoming("A");
+        Gig b = upcoming("B");
+        gigs.save(a);
+        gigs.save(b);
+        SyncTask ta = queue(a, BANDSINTOWN, SyncAction.PUBLISH);
+        SyncTask tb = queue(b, BANDSINTOWN, SyncAction.PUBLISH);
+        bitCreate.outcome = item -> StepOutcome.created("bit-" + item.gig().title(), null);
+
+        runAll(engine(bitCreate));
+
+        assertThat(bitCreate.calls).singleElement().satisfies(batch -> assertThat(batch).hasSize(2));
+        assertThat(published.externalRef(BANDSINTOWN, a.id())).contains("bit-A");
+        assertThat(published.externalRef(BANDSINTOWN, b.id())).contains("bit-B");
+        assertThat(List.of(after(ta).status(), after(tb).status())).containsOnly(SyncStatus.DONE);
+    }
+
+    @Test
+    void a_failed_publish_is_not_tried_again_and_records_nothing_while_moot_ones_end_done() {
+        Gig a = upcoming("A");
+        gigs.save(a);
+        SyncTask failed = queue(a, BANDZONE, SyncAction.PUBLISH);
+        Gig cancelled = upcoming("C").cancel();
+        gigs.save(cancelled);
+        SyncTask moot = queue(cancelled, BANDZONE, SyncAction.PUBLISH);
+        bzCreate.outcome = item -> StepOutcome.failed("timeout");
+
+        runAll(engine(bzCreate));
+
+        assertThat(after(failed).status()).isEqualTo(SyncStatus.FAILED);
+        assertThat(after(failed).message()).contains("create form: timeout", "check Bandzone, then Retry or Discard");
+        assertThat(published.isPublished(BANDZONE, a.id())).isFalse();
+        assertThat(after(moot).message()).isEqualTo("the gig was cancelled before it was published");
+    }
+
+    @Test
+    void cancel_keeps_the_platform_id_and_delete_forgets_it_after_the_gig_left_the_catalog() {
+        Gig a = upcoming("A");
+        gigs.save(a.cancel());
+        published.record(BANDZONE, a.id(), "100");
+        SyncTask cancel = queue(a, BANDZONE, SyncAction.CANCEL);
+        Gig gone = upcoming("Gone");
+        published.record(BANDZONE, gone.id(), "200");
+        SyncTask delete = queue(gone, BANDZONE, SyncAction.DELETE);
+
+        runAll(engine(bzCancel, bzRemove));
+
+        assertThat(after(cancel).status()).isEqualTo(SyncStatus.DONE);
+        assertThat(published.externalRef(BANDZONE, a.id())).contains("100");
+        assertThat(after(delete).status()).isEqualTo(SyncStatus.DONE);
+        assertThat(published.isPublished(BANDZONE, gone.id())).isFalse();
+        assertThat(bzRemove.ran()).singleElement().satisfies(i -> {
+            assertThat(i.externalRef()).isEqualTo("200");
+            assertThat(i.gig()).isNull();
+        });
+    }
+
+    @Test
+    void reactivating_removes_the_cancelled_copy_then_creates_it_again_from_the_platforms_own_steps() {
+        Gig a = upcoming("A");
+        gigs.save(a);
+        published.record(BANDZONE, a.id(), "100");
+        SyncTask task = queue(a, BANDZONE, SyncAction.REACTIVATE);
+        List<String> order = new ArrayList<>();
+        bzRemove.outcome = item -> {
+            order.add("remove " + item.externalRef());
+            return StepOutcome.done(null);
+        };
+        bzCreate.outcome = item -> {
+            order.add("create");
+            return StepOutcome.created("300", null);
+        };
+
+        runAll(engine(bzRemove, bzCreate));
+
+        assertThat(order).containsExactly("remove 100", "create");
+        assertThat(published.externalRef(BANDZONE, a.id())).contains("300");
+        assertThat(after(task).status()).isEqualTo(SyncStatus.DONE);
+        assertThat(after(task).message()).isEqualTo("remove and create again");
+    }
+
+    @Test
+    void a_failed_recreate_leaves_no_record_so_the_next_publish_creates_it() {
+        Gig a = upcoming("A");
+        gigs.save(a);
+        published.record(BANDZONE, a.id(), "100");
+        SyncTask task = queue(a, BANDZONE, SyncAction.REACTIVATE);
+        bzCreate.outcome = item -> StepOutcome.failed("wizard broke");
+
+        runAll(engine(bzRemove, bzCreate));
+
+        assertThat(published.isPublished(BANDZONE, a.id())).isFalse();
+        assertThat(after(task).status()).isEqualTo(SyncStatus.FAILED);
+        assertThat(after(task).message()).contains("re-creating failed (wizard broke)", "publish the gig again");
+    }
+
+    @Test
+    void a_platform_without_the_steps_for_an_action_leaves_it_to_the_user() {
+        Gig a = upcoming("A");
+        gigs.save(a);
+        published.record(BANDSINTOWN, a.id(), "900");
+        SyncTask reactivate = queue(a, BANDSINTOWN, SyncAction.REACTIVATE);
+
+        runAll(engine(bitCreate));
+
+        assertThat(after(reactivate).status()).isEqualTo(SyncStatus.FAILED);
+        assertThat(after(reactivate).message()).contains("do it there by hand", "remove and create again: none for Bandsintown");
     }
 }

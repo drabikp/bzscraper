@@ -4,8 +4,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import sk.drabikp.bzscraper.application.port.out.BandProfileStore;
-import sk.drabikp.bzscraper.application.port.out.BandzonePortalClient;
-import sk.drabikp.bzscraper.application.port.out.BitPortalClient;
 import sk.drabikp.bzscraper.application.port.out.CalendarDecisionStore;
 import sk.drabikp.bzscraper.application.port.out.CalendarFeed;
 import sk.drabikp.bzscraper.application.port.out.CalendarLinkStore;
@@ -13,9 +11,7 @@ import sk.drabikp.bzscraper.application.port.out.CalendarSnapshotStore;
 import sk.drabikp.bzscraper.application.port.out.GigCsvExporter;
 import sk.drabikp.bzscraper.application.port.out.GigImporter;
 import sk.drabikp.bzscraper.application.port.out.GigProvider;
-import sk.drabikp.bzscraper.application.port.out.GigPublisher;
 import sk.drabikp.bzscraper.application.port.out.GigRepository;
-import sk.drabikp.bzscraper.application.port.out.GigWithdrawer;
 import sk.drabikp.bzscraper.application.port.out.PlaceSearch;
 import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.application.port.out.SyncNotifier;
@@ -23,9 +19,6 @@ import sk.drabikp.bzscraper.application.port.out.SyncOutbox;
 import sk.drabikp.bzscraper.application.port.out.SyncStep;
 import sk.drabikp.bzscraper.application.port.out.SyncTrigger;
 import sk.drabikp.bzscraper.application.port.out.Transactions;
-import sk.drabikp.bzscraper.application.service.AdapterCapabilities;
-import sk.drabikp.bzscraper.application.service.BandsintownGigPublisher;
-import sk.drabikp.bzscraper.application.service.BandzoneGigPublisher;
 import sk.drabikp.bzscraper.application.service.CalendarReviewService;
 import sk.drabikp.bzscraper.application.service.GigCatalogService;
 import sk.drabikp.bzscraper.application.service.GigCsvExportService;
@@ -39,7 +32,6 @@ import sk.drabikp.bzscraper.application.service.SyncLogService;
 import sk.drabikp.bzscraper.application.service.SyncRequests;
 import sk.drabikp.bzscraper.application.service.WorkflowEngine;
 import sk.drabikp.bzscraper.domain.model.BandProfile;
-import sk.drabikp.bzscraper.domain.model.PlatformSupport;
 
 import java.time.Clock;
 import java.util.List;
@@ -58,26 +50,8 @@ public class UseCaseConfiguration {
     }
 
     @Bean
-    BandsintownGigPublisher bandsintownGigPublisher(
-            BitPortalClient portalClient,
-            @Value("${bzscraper.bandsintown.notify-followers:false}") boolean notifyFollowers) {
-        return new BandsintownGigPublisher(portalClient, notifyFollowers);
-    }
-
-    @Bean
-    BandzoneGigPublisher bandzoneGigPublisher(BandzonePortalClient portalClient) {
-        return new BandzoneGigPublisher(portalClient);
-    }
-
-    @Bean
     Clock clock() {
         return Clock.systemDefaultZone();
-    }
-
-    /** What each platform can do with past events — declared by its adapters, never configured. */
-    @Bean
-    PlatformSupport platformSupport(List<GigPublisher> publishers, List<GigWithdrawer> withdrawers) {
-        return AdapterCapabilities.of(publishers, withdrawers);
     }
 
     @Bean
@@ -95,9 +69,8 @@ public class UseCaseConfiguration {
 
     @Bean
     SyncRequests syncRequests(SyncOutbox outbox, PublishedGigStore publishedGigStore, SyncTrigger trigger,
-                              SyncNotifier notifier, Clock clock, PlatformSupport platformSupport,
-                              WorkflowEngine workflowEngine) {
-        return new SyncRequests(outbox, publishedGigStore, trigger, notifier, clock, platformSupport, workflowEngine);
+                              SyncNotifier notifier, Clock clock, WorkflowEngine workflowEngine) {
+        return new SyncRequests(outbox, publishedGigStore, trigger, notifier, clock, workflowEngine);
     }
 
     @Bean
@@ -125,12 +98,9 @@ public class UseCaseConfiguration {
     }
 
     @Bean
-    SyncDispatcher syncDispatcher(List<GigPublisher> publishers, List<GigWithdrawer> withdrawers,
-                                  WorkflowEngine workflowEngine, GigRepository gigRepository,
-                                  PublishedGigStore publishedGigStore, SyncOutbox outbox, Transactions transactions,
-                                  SyncNotifier notifier, Clock clock) {
-        return new SyncDispatcher(publishers, withdrawers, workflowEngine, gigRepository, publishedGigStore, outbox,
-                transactions, notifier, clock);
+    SyncDispatcher syncDispatcher(WorkflowEngine workflowEngine, SyncOutbox outbox, SyncNotifier notifier,
+                                  Clock clock) {
+        return new SyncDispatcher(workflowEngine, outbox, notifier, clock);
     }
 
     @Bean

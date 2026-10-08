@@ -48,15 +48,14 @@ Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
     `SyncLogUseCase`, `DispatchSyncUseCase`,
     `ImportGigsUseCase`, `ReviewCalendarUseCase`, `CalendarCatalogUseCase`, legacy scrape/CSV use cases.
   - `port/out/` — `GigRepository`, `PublishedGigStore`, `Transactions`, per-platform strategies
-    `GigPublisher` / `GigWithdrawer` / `GigImporter`, workflow steps `SyncStep`,
+    `GigImporter`, workflow steps `SyncStep`, `PlaceSearch`,
     `BandzonePortalClient` + `BandzoneSession`, `BitPortalClient` + `BitSession`,
     `CalendarFeed`, `BandProfileStore`, `CalendarDecisionStore`, `CalendarSnapshotStore`,
     `CalendarLinkStore`, `SyncOutbox`, `SyncTrigger`,
     `SyncNotifier`, exceptions.
   - `service/` — `GigCatalogService`, `GigPublishingService`, `GigResyncService` (these
     queue platform work via `SyncRequests`), `SyncDispatcher` (runs it), `SyncLogService`,
-    `GigImportService`, `CalendarReviewService`, the publisher
-    strategies `BandzoneGigPublisher` / `BandsintownGigPublisher`, legacy
+    `GigImportService`, `CalendarReviewService`, `WorkflowEngine`, `PlaceService`, legacy
     `GigQueryService` / `GigCsvExportService`.
 - **adapter/in/** — `web/` Vaadin: `GigListView` (root route; the catalog grid with
   add/edit/cancel/reactivate/re-sync/delete/publish and a "Platforms" column linking
@@ -69,10 +68,10 @@ Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
   (`IcsCalendarFeed` + `IcsParser`, `ProfileFile` rule format);
   `bandzone/` (scrape provider + importer, Selenium
   `SeleniumBandzonePortalClient`, `BandzoneLineupPage`, `BandzoneFormEdit` (step),
-  `BandzoneGigWithdrawer`, `StubBandzonePortalClient`); `csv/` (`OpenCsvGigExporter`, the
+  `BandzoneFormCreate`/`BandzoneCancel`/`BandzoneRemove` (steps), `StubBandzonePortalClient`); `csv/` (`OpenCsvGigExporter`, the
   manual-import download); `bandsintown/` (`BandsintownCsv` format, Selenium
   `SeleniumBitPortalClient` + `SeleniumBitSession`, `HumanPacer`, `Totp`,
-  `BandsintownBulkEdit` (step), `BandsintownGigWithdrawer`, `StubBitPortalClient`).
+  `BandsintownBulkCreate`/`BandsintownBulkEdit`/`BandsintownCancel`/`BandsintownRemove` (steps), `StubBitPortalClient`).
 - **config/** — `UseCaseConfiguration` wires POJO services as `@Bean`s; `BandProfileSync`
   loads the shipped + band calendar rules on start.
 
@@ -89,27 +88,27 @@ to a gig that is on a platform, and every Publish, writes its platform work as r
 TRANSACTION as the catalog change (`SyncRequests`, called by `GigCatalogService`,
 `GigPublishingService`, `GigResyncService`). The UI never waits for a platform.
 
-**Workflows** (`docs/sync-workflow-plan.md`): an action with a workflow (`Workflows`: today
-UPDATE = bulk edit → form edit → by hand) runs in the `WorkflowEngine`, not as one adapter
-call. Platforms implement `SyncStep`s (`BandsintownBulkEdit` — 25 rows, no past events;
-`BandzoneFormEdit` — one at a time); what a platform can do is which steps it has.
-A step's `refusal(gig)` passes the gig on (also asked at queue time → "left out"); outcomes:
-done / refused (→ next step, repeatable actions only) / failed (retry at the same step) /
-failed for good (→ user). The run's current step is `sync_task.step`; the path is logged
-("bulk edit: … → form edit"); due runs at one step go together (batch, or ≤10 one by one).
-
-`SyncWorker` (one background thread, woken on enqueue + every `bzscraper.sync.poll-seconds`)
-calls `SyncDispatcher.runNext()` until nothing is due — one task at a time:
+**Workflows** (`docs/sync-workflow-plan.md`): every task is a run of its action's workflow
+(`Workflows`) in the `WorkflowEngine` — an ordered list of step types; platforms implement
+`SyncStep`s, and what a platform can do is which steps it has (no flags, no config):
 
 ```
-PUBLISH     a platform's due publishes run as ONE batch (one browser session);
-            record the platform id per PUBLISHED gig (with DONE, one transaction);
-            skipped (DONE + note) if the gig was deleted/cancelled/published meanwhile
-UPDATE      a workflow (above): the steps get the gig as it is NOW — later edits ride along
-CANCEL      GigWithdrawer.withdraw(ref, CANCEL)
-DELETE      GigWithdrawer.withdraw(ref, DELETE) → forget the record (with DONE)
-REACTIVATE  delete the cancelled copy → forget → publishNew → record the new id
+PUBLISH     bulk upload (BIT: BandsintownBulkCreate, 25 rows) → create form (BZ: BandzoneFormCreate)
+UPDATE      bulk edit (BIT: BandsintownBulkEdit, no past events) → form edit (BZ: BandzoneFormEdit)
+CANCEL      cancel (BZ: BandzoneCancel; BIT: BandsintownCancel = remove "canceled", no past events)
+DELETE      remove (BZ: BandzoneRemove; BIT: BandsintownRemove, no past events) → record forgotten
+REACTIVATE  remove and create again — built by the engine from the platform's remove + create
 ```
+
+A step's `refusal(gig)` passes the gig on (also asked at queue time → "Left out: … by hand",
+and a delete then forgets the copy). Outcomes: done (a created event's id recorded, a removed
+one's forgotten — in the same transaction) / refused (the platform said no, nothing happened
+→ next step) / failed (retry at the same step per `SyncRetryPolicy`; never for creates) /
+failed for good (→ user). The run's step is `sync_task.step`; the path is logged ("bulk edit:
+… → form edit"); due runs at one step go together (batch, or ≤10 one by one, each saved on
+its own). Moot work (gig deleted/cancelled/published meanwhile) ends done with a note.
+`SyncWorker` (one thread, woken on enqueue + every `bzscraper.sync.poll-seconds`) calls
+`SyncDispatcher.runNext()` (→ engine) until nothing is due.
 
 - Tasks work from the state when they RUN; work that became moot ends DONE with a note.
 - Queueing rules (`SyncRequests`): no second UPDATE while one (or the PUBLISH) is PENDING;
@@ -121,18 +120,12 @@ REACTIVATE  delete the cancelled copy → forget → publishNew → record the n
   a PERMANENT failure fails at once — "not supported", a platform switched off, or the
   platform refusing the data (`permanent()` on the platform exceptions; Bandsintown's
   per-row errors like `INVALID_START_TIME`, seen when editing a past event). After a
-  restart, RUNNING repeatable tasks run again, others go FAILED ("check the platform"). FAILED waits for the user: Retry / Discard on
+  restart, RUNNING repeatable tasks run again, others go FAILED ("check the platform").
+  FAILED waits for the user: Retry (from the step where it stopped) / Discard on
   `/sync` (`SyncLogView`). `markRunning` only starts a still-PENDING task.
 - A new task REPLACES the gig's FAILED tasks it redoes on that platform (`replaceFailed`):
   a new publish the failed publish, a new update the failed update, a delete the failed
   updates/cancels (never a failed publish — it may have created the event; the user checks).
-- **What a platform can do with PAST gigs** is declared by its adapters, never configured
-  (`GigPublisher.publishesPastEvents`, `GigWithdrawer.withdrawsPastEvents` →
-  `AdapterCapabilities` → `PlatformSupport`; Bandsintown: publish only; edits: by its steps). Interim — the workflow engine replaces it
-  (`docs/sync-workflow-plan.md`). Work a platform doesn't take is never tried: left out
-  at queue time (shown as "Left out: … do it there by hand"; a delete forgets the record), and
-  a task queued before the gig was over ends DONE "left as it is" when it runs. "Past" = the
-  band's show day (`GigSchedule.showStart`) is before today.
 - UI: actions return a `QueueResult` (shown as "Queued: …"); the catalog's Platforms
   column and a summary line show queued/running/retrying/failed live (`SyncBroadcaster`
   → server push); actions on a gig whose task is RUNNING are blocked.
@@ -236,7 +229,7 @@ platform ended it. Deleting the profile directory logs out.
 
 - **Create** — 2-step wizard: date/time/city → (optional "similar concerts" screen,
   answered "new") → info (name, entry, description, Facebook) → redirect to
-  `/koncert/{id}-…`; the id is taken from that URL. `BandzoneGigPublisher` then
+  `/koncert/{id}-…`; the id is taken from that URL. `BandzoneFormCreate` then
   completes the gig via the edit form (end, venue, poster, lineup); if that fails the
   gig is still PUBLISHED with a note to use Re-sync.
 - **Update** — `/koncert/{id}/update`: poster upload, city then venue autocomplete

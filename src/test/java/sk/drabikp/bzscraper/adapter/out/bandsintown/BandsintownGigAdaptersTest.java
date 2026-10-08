@@ -6,10 +6,8 @@ import sk.drabikp.bzscraper.application.port.out.BitPortalClient;
 import sk.drabikp.bzscraper.application.port.out.BitSession;
 import sk.drabikp.bzscraper.application.port.out.BitUploadException;
 import sk.drabikp.bzscraper.application.port.out.SyncStep;
-import sk.drabikp.bzscraper.application.port.out.GigWithdrawalException;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.StepOutcome;
-import sk.drabikp.bzscraper.domain.model.WithdrawAction;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -19,7 +17,6 @@ import java.time.ZonedDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.doThrow;
@@ -77,31 +74,46 @@ class BandsintownGigAdaptersTest {
     }
 
     @Test
-    void cancel_removes_the_event_with_the_cancelled_reason_and_delete_without_it() throws Exception {
+    void cancel_removes_the_event_with_the_cancelled_reason_and_remove_without_it() throws Exception {
         when(portalClient.openSession()).thenReturn(session);
-        BandsintownGigWithdrawer withdrawer = new BandsintownGigWithdrawer(portalClient);
 
-        withdrawer.withdraw("101", WithdrawAction.CANCEL);
-        withdrawer.withdraw("102", WithdrawAction.DELETE);
+        assertThat(new BandsintownCancel(portalClient, clock).run(List.of(new SyncStep.Item("101", upcoming))))
+                .extracting(StepOutcome::kind).containsExactly(StepOutcome.Kind.DONE);
+        new BandsintownRemove(portalClient, clock).run(List.of(new SyncStep.Item("102", null)));
 
         verify(session).deleteEvent("101", true);
         verify(session).deleteEvent("102", false);
     }
 
     @Test
-    void a_failed_login_fails_the_withdrawal() throws Exception {
-        when(portalClient.openSession()).thenThrow(new BitUploadException("login failed"));
+    void removal_doesnt_take_past_events_and_reports_failures() throws Exception {
+        when(portalClient.openSession()).thenReturn(session);
+        doThrow(new BitUploadException("row not found")).when(session).deleteEvent(any(), anyBoolean());
+        BandsintownRemove remove = new BandsintownRemove(portalClient, clock);
 
-        assertThatThrownBy(() -> new BandsintownGigWithdrawer(portalClient).withdraw("101", WithdrawAction.DELETE))
-                .isInstanceOf(GigWithdrawalException.class).hasMessage("login failed");
+        assertThat(remove.refusal(gig)).get().asString().contains("past events");
+        assertThat(remove.refusal(upcoming)).isEmpty();
+        assertThat(remove.run(List.of(new SyncStep.Item("101", upcoming))))
+                .extracting(StepOutcome::kind).containsExactly(StepOutcome.Kind.FAILED);
     }
 
     @Test
-    void a_delete_failure_is_reported() throws Exception {
+    void the_bulk_upload_records_published_events_and_tells_refused_rows_from_left_drafts() throws Exception {
+        Gig b = TestGigs.gig("C", "Fléda", upcoming.schedule().start());
+        Gig c = TestGigs.gig("D", "Kabinet", upcoming.schedule().start());
         when(portalClient.openSession()).thenReturn(session);
-        doThrow(new BitUploadException("row not found")).when(session).deleteEvent(any(), anyBoolean());
+        when(session.createEvents(any(), anyBoolean())).thenReturn(List.of(
+                BitSession.Created.published(upcoming, "301", "Bandsintown placed it 150 km from Hranice"),
+                BitSession.Created.failed(b, "Bandsintown rejected this row — HTTP 200: …"),
+                BitSession.Created.failed(c, "Uploaded to Bandsintown as event 303, but it is not published (DRAFT)")));
 
-        assertThatThrownBy(() -> new BandsintownGigWithdrawer(portalClient).withdraw("101", WithdrawAction.CANCEL))
-                .isInstanceOf(GigWithdrawalException.class).hasMessage("row not found");
+        List<StepOutcome> outcomes = new BandsintownBulkCreate(portalClient, false).run(List.of(
+                new SyncStep.Item(null, upcoming), new SyncStep.Item(null, b), new SyncStep.Item(null, c)));
+
+        assertThat(outcomes).extracting(StepOutcome::kind).containsExactly(StepOutcome.Kind.DONE,
+                StepOutcome.Kind.REFUSED, StepOutcome.Kind.FAILED_FOR_GOOD);
+        assertThat(outcomes.getFirst().ref()).isEqualTo("301");
+        assertThat(outcomes.getFirst().note()).contains("150 km");
+        verify(session).createEvents(List.of(upcoming, b, c), false);
     }
 }

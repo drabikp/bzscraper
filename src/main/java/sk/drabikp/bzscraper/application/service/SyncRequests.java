@@ -7,8 +7,6 @@ import sk.drabikp.bzscraper.application.port.out.SyncTrigger;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.GigId;
 import sk.drabikp.bzscraper.domain.model.Platform;
-import sk.drabikp.bzscraper.domain.model.PlatformCapabilities;
-import sk.drabikp.bzscraper.domain.model.PlatformSupport;
 import sk.drabikp.bzscraper.domain.model.QueueResult;
 import sk.drabikp.bzscraper.domain.model.SyncAction;
 import sk.drabikp.bzscraper.domain.model.SyncStatus;
@@ -34,8 +32,9 @@ import java.util.function.Function;
  *   <li>a cancel and a reactivate that both haven't run yet cancel out;</li>
  *   <li>a new task replaces the FAILED tasks whose work it does (a new publish the failed
  *       publish, a delete the failed updates/cancels), so they stop waiting for the user;</li>
- *   <li>work a platform's adapter doesn't take on past gigs ({@link PlatformCapabilities})
- *       is not queued — it is listed as left out, with what to do by hand.</li>
+ *   <li>work none of the platform's steps takes (e.g. Bandsintown's on past events) is not
+ *       queued — it is listed as left out, with what to do by hand; a delete then forgets
+ *       the platform copy.</li>
  * </ul>
  */
 public class SyncRequests {
@@ -51,30 +50,22 @@ public class SyncRequests {
     private final SyncTrigger trigger;
     private final SyncNotifier notifier;
     private final Clock clock;
-    private final PlatformSupport support;
     private final SyncAdmission admission;
 
     public SyncRequests(SyncOutbox outbox, PublishedGigStore publishedGigStore, SyncTrigger trigger,
-                        SyncNotifier notifier, Clock clock, PlatformSupport support, SyncAdmission admission) {
+                        SyncNotifier notifier, Clock clock, SyncAdmission admission) {
         this.outbox = outbox;
         this.publishedGigStore = publishedGigStore;
         this.trigger = trigger;
         this.notifier = notifier;
         this.clock = clock;
-        this.support = support;
         this.admission = admission;
     }
 
-    /** Workflow actions are all admitted (tests). */
-    public SyncRequests(SyncOutbox outbox, PublishedGigStore publishedGigStore, SyncTrigger trigger,
-                        SyncNotifier notifier, Clock clock, PlatformSupport support) {
-        this(outbox, publishedGigStore, trigger, notifier, clock, support, SyncAdmission.ALL);
-    }
-
-    /** Every platform can do everything (tests). */
+    /** Everything is admitted (tests that don't care which steps the platforms have). */
     public SyncRequests(SyncOutbox outbox, PublishedGigStore publishedGigStore, SyncTrigger trigger,
                         SyncNotifier notifier, Clock clock) {
-        this(outbox, publishedGigStore, trigger, notifier, clock, PlatformSupport.ALL);
+        this(outbox, publishedGigStore, trigger, notifier, clock, SyncAdmission.ALL);
     }
 
     /** Tells the worker and the pages; call after the transaction committed and only if something was queued. */
@@ -149,8 +140,9 @@ public class SyncRequests {
                 .anyMatch(t -> t.platform() == platform && t.action() == SyncAction.PUBLISH)) {
             return skipped.apply("already being published");
         }
-        if (!support.of(platform).allows(SyncAction.PUBLISH, gig, clock)) {
-            return skipped.apply(PlatformCapabilities.leftOut(platformName(platform), SyncAction.PUBLISH));
+        Optional<String> noStep = admission.leftOut(platform, SyncAction.PUBLISH, gig);
+        if (noStep.isPresent()) {
+            return skipped.apply(noStep.get());
         }
         return new QueueResult(List.of(enqueue(gig, platform, SyncAction.PUBLISH)), List.of());
     }
@@ -185,22 +177,11 @@ public class SyncRequests {
         return new QueueResult(queued, leftOut);
     }
 
-    /**
-     * Whether the platform takes the action on this gig — for a workflow action, whether one
-     * of its steps does; if not, says why in {@code leftOut}.
-     */
+    /** Whether one of the platform's steps takes the action on this gig; if not, says why in {@code leftOut}. */
     private boolean allowed(Gig gig, Platform platform, SyncAction action, List<String> leftOut) {
         Optional<String> noStep = admission.leftOut(platform, action, gig);
-        if (noStep.isPresent()) {
-            leftOut.add(gig.title() + ": " + noStep.get());
-            return false;
-        }
-        if (support.of(platform).allows(action, gig, clock)) {
-            return true;
-        }
-        leftOut.add(gig.title() + " on " + platformName(platform) + ": "
-                + PlatformCapabilities.leftOut(platformName(platform), action));
-        return false;
+        noStep.ifPresent(why -> leftOut.add(gig.title() + ": " + why));
+        return noStep.isEmpty();
     }
 
     private boolean pending(GigId id, Platform platform, SyncAction action) {

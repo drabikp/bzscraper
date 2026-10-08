@@ -1,5 +1,8 @@
 package sk.drabikp.bzscraper.domain.model;
 
+import java.time.Clock;
+import java.time.LocalDate;
+import java.time.ZonedDateTime;
 import java.util.List;
 
 /**
@@ -51,6 +54,12 @@ public record Gig(
 
     public GigId id() {
         return GigId.of(this);
+    }
+
+    /** The band's show day ({@link GigSchedule#showStart}) is before today, in the gig's own time zone. */
+    public boolean isPast(Clock clock) {
+        ZonedDateTime show = schedule.showStart();
+        return show.toLocalDate().isBefore(LocalDate.now(clock.withZone(show.getZone())));
     }
 
     public Gig rescheduledTo(GigSchedule newSchedule) {

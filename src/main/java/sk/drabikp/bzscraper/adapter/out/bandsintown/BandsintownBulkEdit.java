@@ -7,7 +7,6 @@ import sk.drabikp.bzscraper.application.port.out.BitUploadException;
 import sk.drabikp.bzscraper.application.port.out.SyncStep;
 import sk.drabikp.bzscraper.domain.model.Gig;
 import sk.drabikp.bzscraper.domain.model.Platform;
-import sk.drabikp.bzscraper.domain.model.PlatformCapabilities;
 import sk.drabikp.bzscraper.domain.model.StepOutcome;
 import sk.drabikp.bzscraper.domain.model.StepType;
 
@@ -55,7 +54,7 @@ public class BandsintownBulkEdit implements SyncStep {
 
     @Override
     public Optional<String> refusal(Gig gig) {
-        return PlatformCapabilities.isPast(gig, clock)
+        return gig.isPast(clock)
                 ? Optional.of("Bandsintown's upload doesn't take past events") : Optional.empty();
     }
 

@@ -99,7 +99,13 @@ The outbox tables stay; a run gets "current step" + "next check" columns.
    as a Bandsintown fallback waits for step 1. Not yet: a session shared by a platform's
    steps in one pass (each step opens its own; the saved login keeps that cheap), "waiting"
    and "needs you" outcomes, a Stop button.
-3. Publish (with read-back), cancel, delete, reactivate moved onto it.
+3. **Done (2026-10-08):** publish (bulk upload → create form), cancel, delete (remove) and
+   reactivate (remove and create again, built from the platform's steps) moved onto it; the
+   old publisher/withdrawer adapters and capability flags are gone. Verified live end to end
+   on the Bandzone test band (publish → remove).
+3b. Bandsintown's edit form takes past events (seen read-only: `/events/<id>?version=single-page`,
+   every field editable, Save and Delete). A BIT form-edit (and form-remove) step for past
+   events needs one approved test save on the real account first.
 4. Backlog: Songkick (venue lookup + "needs you", bulk add for future dates, add/edit forms,
    approval wait, locked events → email).
 

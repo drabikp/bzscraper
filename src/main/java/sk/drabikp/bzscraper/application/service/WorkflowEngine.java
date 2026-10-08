@@ -33,9 +33,14 @@ import java.util.Optional;
  *   <li>The due runs at one step on one platform go together: a batch step gets up to its
  *       batch size in one call; a one-at-a-time step up to {@value #SINGLE_PER_PASS} gigs,
  *       each result saved before the next, then other work gets its turn.</li>
- *   <li>Outcomes: done; refused → the next step, if the action is safe to repeat; failed →
- *       this step again later ({@link SyncRetryPolicy}); failed for good → the user.</li>
- *   <li>The path is logged: "bulk edit: past event → form edit", "done — form edit".</li>
+ *   <li>Outcomes: done (with the platform record change: a created event's id recorded,
+ *       a removed one's forgotten — in the same transaction); refused (nothing happened
+ *       there) → the next step; failed → this step again later, as {@link SyncRetryPolicy}
+ *       allows (never for creates: one may have happened anyway); failed for good → the user.</li>
+ *   <li>Reactivating ("remove and create again") is built from the platform's remove and
+ *       create steps when it has no step of its own for it.</li>
+ *   <li>Work that became moot ends done with a note (the gig was deleted, cancelled or
+ *       published meanwhile). The path is logged: "bulk edit: past event → form edit".</li>
  * </ul>
  * Also answers, when work is queued, whether any step can do it ({@link #leftOut}).
  */
@@ -67,19 +72,10 @@ public class WorkflowEngine implements SyncAdmission {
         this.clock = clock;
     }
 
-    /** Whether the action runs as a workflow (the others still run the old way). */
-    public boolean handles(SyncAction action) {
-        return Workflows.of(action).isPresent();
-    }
-
     @Override
     public Optional<String> leftOut(Platform platform, SyncAction action, Gig gig) {
-        Optional<List<StepType>> workflow = Workflows.of(action);
-        if (workflow.isEmpty()) {
-            return Optional.empty();
-        }
         List<String> reasons = new ArrayList<>();
-        return firstTaking(platform, workflow.get().getFirst(), gig, reasons).isPresent()
+        return firstTaking(platform, Workflows.of(action).orElseThrow().getFirst(), gig, reasons).isPresent()
                 ? Optional.empty() : Optional.of(byHand(platform, reasons));
     }
 
@@ -88,8 +84,7 @@ public class WorkflowEngine implements SyncAdmission {
         Platform platform = task.platform();
         StepType stepType = stepOf(task);
         SyncStep step = step(platform, stepType);
-        Instant now = clock.instant();
-        List<SyncTask> waiting = outbox.due(platform, task.action(), now).stream()
+        List<SyncTask> waiting = outbox.due(platform, task.action(), clock.instant()).stream()
                 .filter(t -> stepOf(t) == stepType).toList();
         int limit = step == null ? waiting.size() : step.batchSize() == 1 ? SINGLE_PER_PASS : step.batchSize();
 
@@ -110,37 +105,48 @@ public class WorkflowEngine implements SyncAdmission {
     }
 
     /**
-     * Checks a run before its step: the gig and its platform copy still exist, and this step
-     * still takes it (the gig may have changed) — otherwise it moves on or ends here.
+     * Checks a run before its step: whether its work is still needed (the gig as it is now),
+     * and whether this step still takes it — otherwise it moves on or ends here.
      */
     private Optional<SyncStep.Item> prepare(SyncTask run, StepType stepType) {
         Instant now = clock.instant();
-        Optional<Gig> gig = gigRepository.findById(run.gigId());
-        if (gig.isEmpty()) {
-            outbox.markDone(run.id(), "the gig is no longer in the catalog", now);
+        Platform platform = run.platform();
+        Gig gig = gigRepository.findById(run.gigId()).orElse(null);
+        String ref = publishedGigStore.externalRef(platform, run.gigId()).orElse(null);
+        Optional<String> moot = switch (run.action()) {
+            case PUBLISH -> gig == null ? Optional.of("the gig was deleted before it was published")
+                    : gig.cancelled() ? Optional.of("the gig was cancelled before it was published")
+                    : publishedGigStore.isPublished(platform, run.gigId()) ? Optional.of("already published")
+                    : Optional.empty();
+            case UPDATE -> gig == null ? Optional.of("the gig is no longer in the catalog")
+                    : !publishedGigStore.isPublished(platform, run.gigId())
+                    ? Optional.of("not on " + SyncRequests.platformName(platform) + " — nothing to do") : Optional.empty();
+            case CANCEL, DELETE -> publishedGigStore.isPublished(platform, run.gigId())
+                    ? Optional.empty() : Optional.of("not on the platform");
+            case REACTIVATE -> gig == null ? Optional.of("the gig is no longer in the catalog")
+                    : gig.cancelled() ? Optional.of("cancelled again before this ran — nothing to reactivate")
+                    : Optional.empty();
+        };
+        if (moot.isPresent()) {
+            outbox.markDone(run.id(), moot.get(), now);
             return Optional.empty();
         }
-        if (!publishedGigStore.isPublished(run.platform(), run.gigId())) {
-            outbox.markDone(run.id(), "not on " + SyncRequests.platformName(run.platform()) + " — nothing to do", now);
-            return Optional.empty();
-        }
-        Optional<String> ref = publishedGigStore.externalRef(run.platform(), run.gigId());
-        if (ref.isEmpty()) {
-            outbox.markFailed(run.id(), "no " + SyncRequests.platformName(run.platform())
+        if (run.action() != SyncAction.PUBLISH && ref == null) {
+            outbox.markFailed(run.id(), "no " + SyncRequests.platformName(platform)
                     + " id was recorded — do it there by hand", now);
             return Optional.empty();
         }
         List<String> reasons = new ArrayList<>();
-        Optional<StepType> where = firstTaking(run.platform(), stepType, gig.get(), reasons);
+        Optional<StepType> where = firstTaking(platform, stepType, gig, reasons);
         if (where.isEmpty()) {
-            outbox.markFailed(run.id(), byHand(run.platform(), reasons), now);
+            outbox.markFailed(run.id(), byHand(platform, reasons), now);
             return Optional.empty();
         }
         if (where.get() != stepType) {
             outbox.advance(run.id(), where.get(), String.join("; ", reasons), now);
             return Optional.empty();
         }
-        return Optional.of(new SyncStep.Item(ref.get(), gig.get()));
+        return Optional.of(new SyncStep.Item(ref, gig));
     }
 
     private void runBatch(SyncStep step, List<SyncTask> runs, List<SyncStep.Item> items) {
@@ -174,22 +180,32 @@ public class WorkflowEngine implements SyncAdmission {
         Instant now = clock.instant();
         String label = step.type().label();
         switch (outcome.kind()) {
-            case DONE -> transactions.inTransaction(() -> outbox.markDone(run.id(),
-                    label + (outcome.note() == null || outcome.note().isBlank() ? "" : ": " + outcome.note()), now));
+            case DONE -> transactions.inTransaction(() -> {
+                if (outcome.ref() != null) {
+                    publishedGigStore.record(run.platform(), run.gigId(), outcome.ref());
+                }
+                if (run.action() == SyncAction.DELETE) {
+                    publishedGigStore.remove(run.platform(), run.gigId());
+                }
+                outbox.markDone(run.id(),
+                        label + (outcome.note() == null || outcome.note().isBlank() ? "" : ": " + outcome.note()), now);
+            });
             case FAILED_FOR_GOOD -> outbox.markFailed(run.id(), label + ": " + outcome.note(), now);
             case FAILED -> {
                 Optional<Instant> retryAt = SyncRetryPolicy.nextAttempt(run.action(), run.attempts() + 1, false, now);
                 if (retryAt.isPresent()) {
                     outbox.markRetry(run.id(), label + ": " + outcome.note(), retryAt.get(), now);
                 } else {
-                    outbox.markFailed(run.id(), label + ": " + outcome.note(), now);
+                    outbox.markFailed(run.id(), label + ": " + outcome.note()
+                            + (run.action().repeatable() ? "" : " — check " + SyncRequests.platformName(run.platform())
+                            + ", then Retry or Discard"), now);
                 }
             }
             case REFUSED -> {
+                // the platform said no and nothing happened there: another way may do it
                 List<String> reasons = new ArrayList<>(List.of(label + ": " + outcome.note()));
-                Optional<StepType> next = run.action().repeatable()
-                        ? Workflows.after(step.type()).flatMap(after -> firstTaking(run.platform(), after, gig, reasons))
-                        : Optional.empty();
+                Optional<StepType> next = Workflows.after(step.type())
+                        .flatMap(after -> firstTaking(run.platform(), after, gig, reasons));
                 if (next.isPresent()) {
                     outbox.advance(run.id(), next.get(), String.join("; ", reasons), now);
                 } else {
@@ -199,7 +215,11 @@ public class WorkflowEngine implements SyncAdmission {
         }
     }
 
-    /** From {@code from} on, the first step the platform has that takes the gig; why the others didn't goes to {@code reasons}. */
+    /**
+     * From {@code from} on, the first step the platform has that takes the gig; why the others
+     * didn't goes to {@code reasons}. Without the gig (deleted from the catalog), a step is
+     * taken as it is — it was checked when the work was queued.
+     */
     private Optional<StepType> firstTaking(Platform platform, StepType from, Gig gig, List<String> reasons) {
         for (StepType type = from; type != null; type = Workflows.after(type).orElse(null)) {
             SyncStep step = step(platform, type);
@@ -207,7 +227,7 @@ public class WorkflowEngine implements SyncAdmission {
                 reasons.add(type.label() + ": none for " + SyncRequests.platformName(platform));
                 continue;
             }
-            Optional<String> refusal = step.refusal(gig);
+            Optional<String> refusal = gig == null ? Optional.empty() : step.refusal(gig);
             if (refusal.isEmpty()) {
                 return Optional.of(type);
             }
@@ -225,7 +245,71 @@ public class WorkflowEngine implements SyncAdmission {
         return task.step() != null ? task.step() : Workflows.of(task.action()).orElseThrow().getFirst();
     }
 
+    /** The platform's step of that type — for RECREATE, else built from its remove and create steps. */
     private SyncStep step(Platform platform, StepType type) {
-        return steps.getOrDefault(platform, Map.of()).get(type);
+        Map<StepType, SyncStep> own = steps.getOrDefault(platform, Map.of());
+        if (own.containsKey(type) || type != StepType.RECREATE) {
+            return own.get(type);
+        }
+        SyncStep remove = own.get(StepType.REMOVE);
+        SyncStep create = own.containsKey(StepType.FORM_CREATE) ? own.get(StepType.FORM_CREATE)
+                : own.get(StepType.BULK_CREATE);
+        return remove == null || create == null ? null : new Recreate(remove, create);
+    }
+
+    /**
+     * Reactivating where the platform can't un-cancel: the cancelled copy is removed (and its
+     * record forgotten at once — from then on, no record means a later Publish creates it),
+     * then the gig is created again; the new id is recorded when this is settled.
+     */
+    private final class Recreate implements SyncStep {
+
+        private final SyncStep remove;
+        private final SyncStep create;
+
+        Recreate(SyncStep remove, SyncStep create) {
+            this.remove = remove;
+            this.create = create;
+        }
+
+        @Override
+        public Platform platform() {
+            return remove.platform();
+        }
+
+        @Override
+        public StepType type() {
+            return StepType.RECREATE;
+        }
+
+        @Override
+        public int batchSize() {
+            return 1;
+        }
+
+        @Override
+        public Optional<String> refusal(Gig gig) {
+            return remove.refusal(gig).or(() -> create.refusal(gig));
+        }
+
+        @Override
+        public List<StepOutcome> run(List<Item> items) {
+            return items.stream().map(this::recreate).toList();
+        }
+
+        private StepOutcome recreate(Item item) {
+            StepOutcome removed = remove.run(List.of(item)).getFirst();
+            if (removed.kind() != StepOutcome.Kind.DONE) {
+                return removed.kind() == StepOutcome.Kind.REFUSED ? removed
+                        : new StepOutcome(removed.kind(), "could not remove the cancelled copy: " + removed.note(), null);
+            }
+            transactions.inTransaction(() -> publishedGigStore.remove(platform(), item.gig().id()));
+            StepOutcome created = create.run(List.of(new Item(null, item.gig()))).getFirst();
+            if (created.kind() == StepOutcome.Kind.DONE && created.ref() != null) {
+                return created;
+            }
+            return StepOutcome.failedForGood("cancelled copy removed, but re-creating failed (" + created.note()
+                    + ") — publish the gig again");
+        }
     }
 }
