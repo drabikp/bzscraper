@@ -1,0 +1,17 @@
+package sk.drabikp.bzscraper.application.port.in;
+
+import sk.drabikp.bzscraper.domain.model.Platform;
+
+import java.util.List;
+
+/** The catalog as a file to import on a platform by hand — for the platforms that offer one. */
+public interface ExportGigsUseCase {
+
+    /** The platforms there is an export for. */
+    List<Platform> exportable();
+
+    ExportFile export(Platform platform);
+
+    record ExportFile(String fileName, String mediaType, String content) {
+    }
+}

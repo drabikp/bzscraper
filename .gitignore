@@ -34,9 +34,9 @@ build/
 .vscode/
 
 ### Vaadin (auto-generated frontend assets) ###
-src/main/frontend/generated/
-src/main/frontend/index.html
-src/main/bundles/
+**/src/main/frontend/generated/
+**/src/main/frontend/index.html
+**/src/main/bundles/
 package.json
 package-lock.json
 pnpmfile.js

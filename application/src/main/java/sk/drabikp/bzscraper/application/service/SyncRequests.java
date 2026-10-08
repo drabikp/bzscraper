@@ -1,0 +1,212 @@
+package sk.drabikp.bzscraper.application.service;
+
+import sk.drabikp.bzscraper.application.port.out.PublishedGigStore;
+import sk.drabikp.bzscraper.application.port.out.SyncNotifier;
+import sk.drabikp.bzscraper.application.port.out.SyncOutbox;
+import sk.drabikp.bzscraper.application.port.out.SyncTrigger;
+import sk.drabikp.bzscraper.domain.model.Gig;
+import sk.drabikp.bzscraper.domain.model.GigId;
+import sk.drabikp.bzscraper.domain.model.Platform;
+import sk.drabikp.bzscraper.domain.model.Platforms;
+import sk.drabikp.bzscraper.domain.model.QueueResult;
+import sk.drabikp.bzscraper.domain.model.SyncAction;
+import sk.drabikp.bzscraper.domain.model.SyncStatus;
+import sk.drabikp.bzscraper.domain.model.SyncTask;
+
+import java.time.Clock;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
+
+/**
+ * What a catalog change puts in the sync outbox. Called INSIDE the caller's transaction
+ * (outbox pattern: the change and its tasks commit together); {@link #signal()} after it
+ * commits. A task reads the gig's state when it runs, so:
+ * <ul>
+ *   <li>an update is not queued again while one (or the publish) is still pending —
+ *       that one will carry the newest details;</li>
+ *   <li>deleting a gig discards its pending tasks and queues one delete per platform the
+ *       gig is actually on;</li>
+ *   <li>a cancel and a reactivate that both haven't run yet cancel out;</li>
+ *   <li>a new task replaces the FAILED tasks whose work it does (a new publish the failed
+ *       publish, a delete the failed updates/cancels), so they stop waiting for the user;</li>
+ *   <li>work none of the platform's steps takes (e.g. edits of past events where no step can) is not
+ *       queued — it is listed as left out, with what to do by hand; a delete then forgets
+ *       the platform copy.</li>
+ * </ul>
+ */
+public class SyncRequests {
+
+    /**
+     * What a delete replaces. A failed publish or reactivate stays: it may have created an
+     * event on the platform anyway, and only the user can check that.
+     */
+    private static final Set<SyncAction> REPEATABLE = EnumSet.of(SyncAction.UPDATE, SyncAction.CANCEL, SyncAction.DELETE);
+
+    private final SyncOutbox outbox;
+    private final PublishedGigStore publishedGigStore;
+    private final SyncTrigger trigger;
+    private final SyncNotifier notifier;
+    private final Clock clock;
+    private final SyncAdmission admission;
+    private final Platforms platforms;
+
+    public SyncRequests(SyncOutbox outbox, PublishedGigStore publishedGigStore, SyncTrigger trigger,
+                        SyncNotifier notifier, Clock clock, SyncAdmission admission, Platforms platforms) {
+        this.outbox = outbox;
+        this.publishedGigStore = publishedGigStore;
+        this.trigger = trigger;
+        this.notifier = notifier;
+        this.clock = clock;
+        this.admission = admission;
+        this.platforms = platforms;
+    }
+
+    /** Whether the gig's platform work is running right now (then the gig must not change). */
+    boolean running(GigId gigId) {
+        return outbox.openFor(gigId).stream().anyMatch(t -> t.status() == SyncStatus.RUNNING);
+    }
+
+    /** Tells the worker and the pages; call after the transaction committed and only if something was queued. */
+    void signal(QueueResult result) {
+        if (!result.queued().isEmpty()) {
+            trigger.wake();
+            notifier.changed();
+        }
+    }
+
+    QueueResult update(Gig gig) {
+        List<SyncTask> queued = new ArrayList<>();
+        List<String> leftOut = new ArrayList<>();
+        for (Platform platform : platforms.all()) {
+            boolean pendingPublish = pending(gig.id(), platform, SyncAction.PUBLISH);
+            if (!publishedGigStore.isPublished(platform, gig.id()) && !pendingPublish) {
+                continue;
+            }
+            if (!allowed(gig, platform, SyncAction.UPDATE, leftOut)) {
+                continue;
+            }
+            if (!pendingPublish && !pending(gig.id(), platform, SyncAction.UPDATE)) {
+                queued.add(enqueue(gig, platform, SyncAction.UPDATE));
+            }
+        }
+        return new QueueResult(queued, leftOut);
+    }
+
+    QueueResult cancel(Gig gig) {
+        return onPublishedPlatforms(gig, SyncAction.CANCEL, SyncAction.REACTIVATE);
+    }
+
+    QueueResult reactivate(Gig gig) {
+        return onPublishedPlatforms(gig, SyncAction.REACTIVATE, SyncAction.CANCEL);
+    }
+
+    /**
+     * {@code gig} is the deleted catalog gig (null if it wasn't there). Where the platform
+     * can't remove it (a past event), its record is forgotten and the user told to delete
+     * it there by hand.
+     */
+    QueueResult delete(GigId id, Gig gig) {
+        String label = gig != null ? SyncTask.labelOf(gig) : id.toString();
+        List<SyncTask> queued = new ArrayList<>();
+        List<String> leftOut = new ArrayList<>();
+        for (Platform platform : platforms.all()) {
+            outbox.supersede(id, platform, "the gig was deleted", clock.instant());
+            outbox.replaceFailed(id, platform, REPEATABLE, "the gig was deleted", clock.instant());
+            if (!publishedGigStore.isPublished(platform, id)) {
+                continue;
+            }
+            if (gig != null && !allowed(gig, platform, SyncAction.DELETE, leftOut)) {
+                publishedGigStore.remove(platform, id);
+                continue;
+            }
+            SyncTask task = outbox.enqueue(id, label, platform, SyncAction.DELETE, clock.instant());
+            queued.add(task);
+        }
+        return new QueueResult(queued, leftOut);
+    }
+
+    QueueResult publish(Platform platform, Gig gig) {
+        Function<String, QueueResult> skipped = why ->
+                new QueueResult(List.of(), List.of(gig.title() + " on " + platforms.name(platform) + ": " + why));
+        if (gig.cancelled()) {
+            return skipped.apply("cancelled");
+        }
+        if (publishedGigStore.isPublished(platform, gig.id())) {
+            return skipped.apply("already published");
+        }
+        if (outbox.openFor(gig.id()).stream()
+                .anyMatch(t -> t.platform() == platform && t.action() == SyncAction.PUBLISH)) {
+            return skipped.apply("already being published");
+        }
+        Optional<String> noStep = admission.leftOut(platform, SyncAction.PUBLISH, gig);
+        if (noStep.isPresent()) {
+            return skipped.apply(noStep.get());
+        }
+        return new QueueResult(List.of(enqueue(gig, platform, SyncAction.PUBLISH)), List.of());
+    }
+
+    void move(GigId from, Gig to) {
+        if (!from.equals(to.id())) {
+            outbox.move(from, to.id(), SyncTask.labelOf(to));
+        }
+    }
+
+    /**
+     * Queues {@code action} on every platform the gig is on — unless the {@code opposite}
+     * change is still pending there: the platform never saw it, so both are dropped and an
+     * update brings the copy to the gig's current details instead.
+     */
+    private QueueResult onPublishedPlatforms(Gig gig, SyncAction action, SyncAction opposite) {
+        List<SyncTask> queued = new ArrayList<>();
+        List<String> leftOut = new ArrayList<>();
+        for (Platform platform : platforms.all()) {
+            if (!publishedGigStore.isPublished(platform, gig.id())) {
+                continue;
+            }
+            if (pending(gig.id(), platform, opposite)) {
+                outbox.supersede(gig.id(), platform, "undone by " + action.verb() + " before it ran", clock.instant());
+                if (allowed(gig, platform, SyncAction.UPDATE, leftOut)) {
+                    queued.add(enqueue(gig, platform, SyncAction.UPDATE));
+                }
+            } else if (allowed(gig, platform, action, leftOut)) {
+                queued.add(enqueue(gig, platform, action));
+            }
+        }
+        return new QueueResult(queued, leftOut);
+    }
+
+    /** Whether one of the platform's steps takes the action on this gig; if not, says why in {@code leftOut}. */
+    private boolean allowed(Gig gig, Platform platform, SyncAction action, List<String> leftOut) {
+        Optional<String> noStep = admission.leftOut(platform, action, gig);
+        noStep.ifPresent(why -> leftOut.add(gig.title() + ": " + why));
+        return noStep.isEmpty();
+    }
+
+    private boolean pending(GigId id, Platform platform, SyncAction action) {
+        return outbox.openFor(id).stream().anyMatch(t ->
+                t.platform() == platform && t.action() == action && t.status() == SyncStatus.PENDING);
+    }
+
+    private SyncTask enqueue(Gig gig, Platform platform, SyncAction action) {
+        SyncTask task = outbox.enqueue(gig.id(), SyncTask.labelOf(gig), platform, action, clock.instant());
+        outbox.replaceFailed(gig.id(), platform, replacedBy(action),
+                "a new " + action.verb() + " was queued (#" + task.id() + ")", clock.instant());
+        return task;
+    }
+
+    /** The failed tasks whose work a new {@code action} does. */
+    private static Set<SyncAction> replacedBy(SyncAction action) {
+        return switch (action) {
+            case PUBLISH -> EnumSet.of(SyncAction.PUBLISH);
+            case UPDATE -> EnumSet.of(SyncAction.UPDATE);
+            case CANCEL -> EnumSet.of(SyncAction.CANCEL, SyncAction.UPDATE);
+            case REACTIVATE -> EnumSet.of(SyncAction.REACTIVATE, SyncAction.UPDATE);
+            case DELETE -> REPEATABLE;
+        };
+    }
+
+}

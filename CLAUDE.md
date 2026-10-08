@@ -5,12 +5,41 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Run
 
 ```bash
-./mvnw clean install                          # Build
-./mvnw spring-boot:run                         # Run (port 8080)
-./mvnw test                                     # Run all tests
-./mvnw test -Dtest=GigPublishingServiceTest    # Run a single test class
-./mvnw -Pproduction                            # Production build (Vaadin frontend optimization)
+./mvnw clean install                                   # Build every module
+./mvnw -pl app -am spring-boot:run                     # Run (port 8080; working dir = repo root)
+./mvnw test                                            # Run all tests
+./mvnw test -Dtest=GigPublishingServiceTest -Dsurefire.failIfNoSpecifiedTests=false   # One class
+./mvnw -pl adapters/bandzone -am test                  # One module (and what it needs)
+./mvnw -Pproduction -pl app -am package                # Production build (Vaadin frontend optimization)
 ```
+
+**Modules** (Maven multi-module; packages unchanged, so a class's module follows its package):
+
+```
+domain/                 bzscraper-domain        framework-free model + rules; test-jar: TestGigs, TestPlatforms
+application/            bzscraper-application   use cases, ports, workflow engine; framework-free;
+                                                test-jar: SyncOutboxContract
+adapters/persistence    JPA entities/stores, Flyway migrations (db/migration), H2 backup
+adapters/browser        PlatformBrowser (a platform's one Chromium), BrowserProfile, WarmBrowser,
+                        BrowserProperties/SeleniumOptions; test-jar: TestChromium
+adapters/bandzone       Bandzone: PlatformTraits, scrape + Selenium client, sync steps, properties
+adapters/bandsintown    Bandsintown: PlatformTraits, portal client, sync steps, properties + the
+                        CSV download (adapter.out.csv)
+adapters/calendar       iCal feed, profile file format, shipped presets (calendar/*.profile)
+adapters/places         Photon town search
+adapters/web            Vaadin views (the theme itself lives in app/src/main/frontend)
+adapters/rest           REST endpoint (the catalog's gigs)
+adapters/sync-worker    SyncWorker, PlatformCheckSchedule, sync/check properties
+app/                    BzscraperApplication, config/ wiring, application.properties, Vaadin theme
+                        + dev bundle (Vaadin takes app/ as its project folder)
+```
+
+Adapters depend on `application` (and `browser`), never on each other otherwise; only `app` sees
+them all. Configuration is typed: a `@ConfigurationProperties` record per module
+(`BandzoneProperties`, `BandsintownProperties`, `BrowserProperties`, `CalendarProperties`,
+`SyncProperties`, `CheckProperties`, `BackupProperties`, `PlacesProperties`; secrets are
+hidden in their `toString`); a platform switched on without its login stops the app at start. `spring-boot:run` runs in the repo root (`./data`, `./calendar` are relative to it).
+Spring tests: `app` (whole context) and `persistence` (its own `PersistenceTestApplication`).
 
 ## What This Project Does
 
@@ -18,67 +47,95 @@ A personal Spring Boot tool for a single band's gig admin — a **gig sync hub**
 are kept in a local catalog (H2 file DB, the source of truth), can be imported from
 Bandzone.cz, and are **published to listing platforms** (Bandzone, Bandsintown). Edits,
 cancel, reactivate and delete in the catalog are propagated to every platform the gig
-was published to. A Vaadin UI drives it; the legacy scrape → Bandsintown CSV export and
-a REST endpoint (`/gigs/{band_slug}`) still exist.
+was published to. A Vaadin UI drives it; a per-platform file download (`GigExporter`, the
+Bandsintown CSV) and a REST endpoint (`/gigs/{band_slug}`, the catalog's gigs) exist too.
 
 ## Architecture
 
-Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`:
+Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`. **The core is platform-agnostic**:
+domain and application never name a platform or branch on one. A `Platform` is a value (an id
+string); what a platform IS comes from its adapter — a `PlatformTraits` bean (display name,
+keeps cancelled events, lists the band's slot, carries admission, import precedence, event
+URL) and the `SyncStep`s / `GigImporter` / `GigExporter` beans it provides. `Platforms` (the
+registry, in import-precedence order) is built from the traits beans. A new platform is a new
+adapter module with those beans — the core, the engine and the UI don't change.
 
 - **domain/** — framework-free core.
-  - `model/` — sync outbox types (`SyncTask`, `SyncAction`, `SyncStatus`, `SyncLogEntry`,
-    `QueueResult`); `Gig` aggregate (immutable record; invariants in the compact
-    constructor) built from value objects `GigSchedule` (the whole event — a festival may
-    span days — plus the band's own optional `Slot`), `Location`, `Admission`;
-    identified by `GigId` (start date + normalized venue, or `@` + city when the venue is
-    unknown/"TBA" — it **changes** when an edit moves the date or venue). `CityName`
-    compares city spellings across platforms (accents, "Prague" = "Praha", "Vsetín 1"). `Platform`, `PublishResult`/`PublishStatus`,
-    `PlatformResult` (outcome of one update/withdraw on one platform),
-    `WithdrawAction` (CANCEL/DELETE), `Publication` (a gig's copy on a platform), import
-    types (`ImportedGig`, `ImportProposal`, `ImportPlan`, `ImportDecision`,
-    `ImportResult`), band calendar types (`CalendarEvent`, `BandProfile` of `ProfileRule`s
-    by `RuleKind`/`RuleOrigin`, `CalendarClassification`, `CalendarEventKind`/`Status`).
-    `GigSummary` is the legacy scraped record.
-  - `service/` — `ImportPlanner` (multi-platform import plan), `GigMerge`,
-    `CalendarEventClassifier`, `CalendarGigDrafter`, `CalendarChanges`, `CalendarCatalogMatcher`,
-    `SyncRetryPolicy`, `GigDateFilter`, `GigSummaryToGigMapper`.
+  - `model/` — `Gig` aggregate (immutable record; invariants in the compact constructor) built
+    from value objects `GigSchedule` (the whole event — a festival may span days — plus the
+    band's own optional `Slot`), `Location` (+ `Address`), `Admission`; identified by `GigId`
+    (start date + normalized venue, or `@` + city when the venue is unknown/"TBA" — it
+    **changes** when an edit moves the date or venue). `CityName` compares city spellings
+    across platforms (accents, "Prague" = "Praha", "Vsetín 1"). `Platform`, `PlatformTraits`,
+    `Platforms`; sync types (`SyncTask`, `SyncAction`, `SyncStatus` with its allowed
+    transitions `canBecome`, `SyncLogEntry`, `StepType`, `StepOutcome`, `QueueResult`);
+    `Publication` (a gig's copy on a platform); import types (`ImportedGig`, `ImportProposal`,
+    `ImportPlan`, `ImportDecision`, `ImportResult`); platform check (`Drift`, `PlatformCheck`);
+    band calendar types (`CalendarEvent`, `BandProfile` of `ProfileRule`s by
+    `RuleKind`/`RuleOrigin`, `CalendarClassification`, `CalendarRow`, `CalendarFilter` — the
+    calendar page's views and counts); `Town`.
+  - `service/` — `Workflows` (each action's step types), `MootWork` (work that became
+    unnecessary), `SyncRetryPolicy`, `ImportPlanner`, `GigMerge`, `Reconciler` (platform
+    check), `CalendarEventClassifier`, `CalendarGigDrafter`, `CalendarChanges`,
+    `CalendarCatalogMatcher`, `TownChoice`.
 - **application/** — use cases and the ports they depend on.
-  - `port/in/` — catalog (`SaveGig`, `ListGigs`, `UpdateGig`, `CancelGig`,
-    `DeleteGig` — each returns what it queued), `PublishGigsUseCase`, `ResyncGigUseCase`,
-    `SyncLogUseCase`, `DispatchSyncUseCase`,
-    `ImportGigsUseCase`, `ReviewCalendarUseCase`, `CalendarCatalogUseCase`, legacy scrape/CSV use cases.
-  - `port/out/` — `GigRepository`, `PublishedGigStore`, `Transactions`, per-platform strategies
-    `GigImporter`, workflow steps `SyncStep`, `PlaceSearch`,
-    `BandzonePortalClient` + `BandzoneSession`, `BitPortalClient` + `BitSession`,
-    `CalendarFeed`, `BandProfileStore`, `CalendarDecisionStore`, `CalendarSnapshotStore`,
-    `CalendarLinkStore`, `SyncOutbox`, `SyncTrigger`,
-    `SyncNotifier`, exceptions.
-  - `service/` — `GigCatalogService`, `GigPublishingService`, `GigResyncService` (these
-    queue platform work via `SyncRequests`), `SyncDispatcher` (runs it), `SyncLogService`,
-    `GigImportService`, `CalendarReviewService`, `WorkflowEngine`, `PlaceService`, legacy
-    `GigQueryService` / `GigCsvExportService`.
+  - `port/in/` — catalog (`SaveGig`, `ListGigs`, `UpdateGig`, `CancelGig`, `DeleteGig` — each
+    returns what it queued), `PublishGigsUseCase`, `ResyncGigUseCase`, `ExportGigsUseCase`,
+    `SyncLogUseCase`, `DispatchSyncUseCase`, `PauseSyncUseCase`, `PlatformBreakerUseCase`,
+    `CheckPlatformsUseCase`, `ImportGigsUseCase`, `ReviewCalendarUseCase`,
+    `CalendarCatalogUseCase`, `FindPlacesUseCase`, `ListPublicationsUseCase`, `SyncWorkSignal`;
+    `UserFacingException` (a rule's refusal the user reads: `GigBusyException`,
+    `GigIdentityTakenException`, `ConcurrentChangeException`).
+  - `port/out/` — `GigRepository`, `PublishedGigStore`, `Transactions`, `SyncOutbox`,
+    `SettingsStore`, `SyncTrigger`, `SyncNotifier`, per-platform strategies `SyncStep` (+
+    `OneAtATimeStep`), `GigImporter`, `GigExporter`; `PlatformException` with its
+    `FailureKind`; `PlaceSearch`, calendar ports (`CalendarFeed`, `BandProfileStore`,
+    `CalendarDecisionStore`, `CalendarSnapshotStore`, `CalendarLinkStore`).
+  - `service/` — `CatalogWrites` (THE write path for gigs, see below), `GigCatalogService`,
+    `GigPublishingService`, `GigResyncService` (these queue platform work via `SyncRequests`),
+    `StepRegistry` (the platforms' steps; also what may be queued: `SyncAdmission`),
+    `WorkflowEngine` + `SyncDispatcher` (run it), `PlatformBreakers` (behind
+    `PlatformHealth`), `SyncPause`, `SyncWakeUp`, `SyncLogService`, `GigImportService`,
+    `GigExportService`, `PlatformCheckService`, `CalendarReviewService`, `PlaceService`.
 - **adapter/in/** — `web/` Vaadin: `GigListView` (root route; the catalog grid with
-  add/edit/cancel/reactivate/re-sync/delete/publish and a "Platforms" column linking
+  add/edit/cancel/reactivate/re-sync/delete/publish/download and a "Platforms" column linking
   each gig's platform page via `PlatformLinks` plus its live sync state), `SyncLogView`
-  (`/sync`), `SyncBroadcaster`, `AddGigView`, `ImportView`, `CalendarView`,
-  `GigForm`, `PublishSummaries`; `sync/` `SyncWorker`; `rest/` `GigSummaryEndpoint`.
-- **adapter/out/** — `persistence/` (JPA `GigEntity`/`JpaGigRepository`,
-  `PublishedGigEntity`/`JpaPublishedGigStore`, `JpaBandProfileStore`,
-  `JpaCalendarDecisionStore`, `SpringTransactions`, `H2ScriptBackup`); `calendar/`
-  (`IcsCalendarFeed` + `IcsParser`, `ProfileFile` rule format);
-  `bandzone/` (scrape provider + importer, Selenium
-  `SeleniumBandzonePortalClient`, `BandzoneLineupPage`, `BandzoneFormEdit` (step),
-  `BandzoneFormCreate`/`BandzoneCancel`/`BandzoneRemove` (steps), `StubBandzonePortalClient`); `csv/` (`OpenCsvGigExporter`, the
-  manual-import download); `bandsintown/` (`BandsintownCsv` format, Selenium
-  `SeleniumBitPortalClient` + `SeleniumBitSession`, `HumanPacer`, `Totp`,
-  `BandsintownBulkCreate`/`BandsintownBulkEdit`/`BandsintownFormEdit`/`BandsintownCancel`/`BandsintownRemove`/`BandsintownFormCancel`/`BandsintownFormRemove` (steps), `StubBitPortalClient`).
+  (`/sync`), `PlatformCheckView` (`/check`), `ImportView`, `CalendarView`, `AddGigView`,
+  `GigForm`, `SyncBroadcaster`, `SyncLabels`, `UserErrors` (every view shows refusals and
+  failures the same way; unexpected ones are logged, not shown raw); `sync/` `SyncWorker`,
+  `PlatformCheckSchedule`; `rest/` `GigSummaryEndpoint`.
+- **adapter/out/** — `persistence/` (JPA entities + stores: `JpaGigRepository`,
+  `JpaPublishedGigStore`, `JpaSyncOutbox`, `JpaSettingsStore`, calendar stores,
+  `SpringTransactions`, `H2ScriptBackup`); `browser/` (`PlatformBrowser`); `calendar/`
+  (`IcsCalendarFeed` + `IcsParser`, `ProfileFile` rule format); `places/`
+  (`PhotonPlaceSearch`); `bandzone/` (`BandzonePlatform` traits; scrape provider +
+  importer; Selenium `SeleniumBandzonePortalClient` (login) + `SeleniumBandzoneSession` over
+  page objects `BandzoneBrowser`, `BandzoneForm` (shared fields: town, club, info),
+  `BandzoneCreateWizard`, `BandzoneUpdateForm`, `BandzoneDeleteTab`, `BandzoneLineupPage`;
+  steps `BandzoneFormCreate`/`BandzoneFormEdit`/`BandzoneCancel`/`BandzoneRemove`;
+  `StubBandzonePortalClient`); `bandsintown/` (`BandsintownPlatform` traits;
+  `BandsintownCsv` format; Selenium `SeleniumBitPortalClient` (login) + `SeleniumBitSession`
+  over page objects `BitPortal`, `BitEventsPage`, `BitBulkUpload`, `BitEventForm`,
+  `BitDeleteDialog`; the portal's replies typed once: `PortalReplies` (capture) →
+  `PortalReply`, `BitEvent`, `BitPlace`; `HumanPacer`, `Totp`, `RemovalReason`; steps
+  `BandsintownBulkCreate`/`BandsintownBulkEdit`/`BandsintownFormEdit`/`BandsintownCancel`/
+  `BandsintownRemove`/`BandsintownFormCancel`/`BandsintownFormRemove`;
+  `StubBitPortalClient`); `csv/` (`OpenCsvGigExporter`, the manual-import download).
 - **config/** — `UseCaseConfiguration` wires POJO services as `@Bean`s; `BandProfileSync`
   loads the shipped + band calendar rules on start.
 
 Services are plain POJOs wired explicitly in `UseCaseConfiguration`; adapters are
-`@Component`s. `SyncDispatcher` collects its per-platform strategies via an injected
-`List` into an `EnumMap<Platform, …>` (two beans for one platform = startup error), so
-**a new platform is new strategy beans only** — orchestrators and UI don't change.
+`@Component`s. `StepRegistry` collects every `SyncStep` bean by (platform, step type) — two
+beans for one slot = startup error — and `GigImportService`/`GigExportService` collect the
+importers/exporters the same way.
+
+**Catalog writes** (`CatalogWrites`): the add page, edits, the calendar and Import all write
+gigs through it, so its rules hold for every writer — a gig never overwrites another (a new gig
+or an identity move onto an existing gig → `GigIdentityTakenException`); an edit applies only
+to the gig as the writer saw it (`ConcurrentChangeException`); a gig whose platform work is
+RUNNING is not changed, deleted, re-synced or unlinked (`GigBusyException`); an identity move
+takes the gig's platform records, queued work and calendar links along; an edit queues the
+update everywhere the gig is published.
 
 ## Platform sync — outbox, eventually consistent
 
@@ -108,7 +165,8 @@ A step's `refusal(gig)` passes the gig on (also asked at queue time → "Left ou
 and a delete then forgets the copy). Outcomes: done (a created event's id recorded, a removed
 one's forgotten — in the same transaction) / refused (the platform said no, nothing happened
 → next step) / failed (retry at the same step per `SyncRetryPolicy`; never for creates) /
-failed for good (→ user). The run's step is `sync_task.step`; the path is logged ("bulk edit:
+failed for good (→ user) / postponed (the platform's browser was busy with a read — again in a
+minute, no attempt used, not counted by the breaker). The run's step is `sync_task.step`; the path is logged ("bulk edit:
 … → form edit"); due runs at one step go together (batch, or ≤10 one by one, each saved on
 its own). Moot work (gig deleted/cancelled/published meanwhile) ends done with a note.
 `SyncWorker` (one thread, woken on enqueue + every `bzscraper.sync.poll-seconds`) calls
@@ -121,25 +179,62 @@ its own). Moot work (gig deleted/cancelled/published meanwhile) ends done with a
   and REACTIVATE cancel out into an UPDATE; an identity change moves records AND tasks.
 - `SyncRetryPolicy`: UPDATE/CANCEL/DELETE (repeatable) retry after 1, 5, 15 min, then
   FAILED; PUBLISH/REACTIVATE never auto-retry (a failure may have created the event);
-  a PERMANENT failure fails at once — "not supported", a platform switched off, or the
-  platform refusing the data (`permanent()` on the platform exceptions; Bandsintown's
-  per-row errors like `INVALID_START_TIME`, seen when editing a past event). After a
+  what a platform failure means is TYPED where it happens (`FailureKind` on
+  `PlatformException` ← `BitUploadException`/`BandzoneUploadException`): TEMPORARY (retry),
+  REFUSED (the platform said no this way — next step, e.g. Bandsintown's row error
+  `INVALID_START_TIME` on a past event), NEEDS_USER (switched off or not configured, a town to
+  correct, a draft left behind — fails at once), BUSY (postponed); steps return
+  `e.outcome()`, and per-row replies (`BitSession.Created`/`Edited`) carry their kind too. After a
   restart, RUNNING repeatable tasks run again, others go FAILED ("check the platform").
   FAILED waits for the user: Retry (from the step where it stopped) / Discard on
-  `/sync` (`SyncLogView`). `markRunning` only starts a still-PENDING task.
+  `/sync` (`SyncLogView`). `markRunning` only starts a still-PENDING task; every status change
+  is checked against `SyncStatus.canBecome` (a DONE task stays done whoever writes late) and
+  `sync_task.version` (V12) makes two concurrent writers fail instead of overwriting.
 - A new task REPLACES the gig's FAILED tasks it redoes on that platform (`replaceFailed`):
   a new publish the failed publish, a new update the failed update, a delete the failed
   updates/cancels (never a failed publish — it may have created the event; the user checks).
-- **Pause / Resume** on `/sync` (`PauseSyncUseCase`, `SyncPause`, in memory): the gig in
-  progress finishes, nothing new starts, the waiting work stays queued.
-- **Warm browser** (`WarmBrowser`): a platform's browser stays open ~60 s after a session, so
+- **Pause / Resume** on `/sync` (`PauseSyncUseCase`, `SyncPause`): the gig in progress
+  finishes, nothing new starts, the waiting work stays queued; a pause survives a restart
+  (`SettingsStore`, table `app_setting`).
+- **Circuit breaker per platform** (`PlatformBreakers`, `PlatformBreakerUseCase`, in memory):
+  a batch whose results are ALL temporary failures counts against its platform (anything
+  else — done, refused, failed for good — shows the platform answering and resets it);
+  `bzscraper.sync.breaker.failures` (3) in a row → the platform is held back for
+  `.cooldown-minutes` (30): its tasks stay queued (`SyncOutbox.nextDue(now, skipping)`), the
+  other platforms go on; then one trial batch decides. `/sync` shows it with "Resume <platform>".
+- **One browser per platform** (`PlatformBrowser`): a sync step doesn't wait for a browser
+  another operation holds (BUSY → postponed); a read the user started (Import, the platform
+  check) waits up to 10 min. The browser stays warm ~60 s after a session (`WarmBrowser`), so
   the next step or task takes it over (one start + login check per run, not per gig); closed
-  when idle and on shutdown; still one browser per platform at a time.
+  when idle and on shutdown. Failures leave a screenshot,
+  `$TMPDIR/bzscraper-<platform>-<step>.png`.
 - UI: actions return a `QueueResult` (shown as "Queued: …"); the catalog's Platforms
   column and a summary line show queued/running/retrying/failed live (`SyncBroadcaster`
-  → server push); actions on a gig whose task is RUNNING are blocked.
-- Tests: `bzscraper.sync.worker.enabled=false` (tasks queue, never run); service tests
-  use `SyncFakes` (in-memory outbox/records/repository, mutable clock).
+  → server push); actions on a gig whose task is RUNNING are refused by the core
+  (`CatalogWrites`), the views only grey the buttons.
+- **Optimistic locking**: `UpdateGigUseCase.update(seen, updated)` — `seen` is the gig as the
+  user opened it; if the catalog's gig is no longer that (changed in another window, by an
+  import or the calendar, or deleted) nothing changes and `ConcurrentChangeException` says
+  "changed meanwhile, reload". Two transactions saving one gig at once: `gig.version`
+  (`@Version`, V10; `JpaGigRepository.save` carries the version it read) — the later commit
+  fails, `SpringTransactions` turns it into the same exception.
+
+## Platform check (`/check`) — reconciliation
+
+The sync only knows what the app did; the platforms can drift by hand or by their own
+guessing (a same-named town). `CheckPlatformsUseCase` (`PlatformCheckService`) reads every
+platform through its `GigImporter` (read-only, the same reading as Import; a platform held
+back by its breaker is skipped) and `Reconciler` (domain) compares each PUBLISHED gig of the
+upcoming ones and the last `bzscraper.check.past-days` (60) with its copy there: MISSING (the
+event is gone) or DIFFERENT — day, time (Bandsintown: the band's slot), name, venue (a
+placeholder "-" is none; a longer platform name is fine), town ("Košice I" = Košice),
+country, cancelled state (not on Bandsintown, which has none), and the place: Bandsintown
+coordinates (`ImportedGig.latitude/longitude`) > 25 km from a town picked from the place
+search. Gigs with sync work still queued are skipped. Fixes, always the user's click:
+Re-sync (`ResyncGigUseCase`) or Forget link (a gone event; Publish creates it again). Also
+counts platform events no gig is published as (→ Import). Runs nightly
+(`PlatformCheckSchedule`, `bzscraper.check.cron`, default 04:30; `bzscraper.check.enabled`);
+the result is kept in memory.
 
 ## Import (`/import`)
 
@@ -218,9 +313,8 @@ band-admin pages with Selenium; off by default (stub). Enable + configure:
 
 ```
 bzscraper.bandzone.selenium.enabled=true
-bzscraper.bandzone.login / .password / .band-slug     # NEVER hardcode in source
-bzscraper.bandzone.selenium.chromium-binary=/usr/bin/chromium
-bzscraper.bandzone.selenium.chromedriver=/usr/bin/chromedriver
+bzscraper.bandzone.login / .password / .band-slug     # required when enabled; NEVER in source
+bzscraper.bandzone.selenium.chromium-binary / .chromedriver   # else bzscraper.browser.chromium-binary / .chromedriver
 bzscraper.bandzone.selenium.profile-dir              # default ~/.bzscraper/bandzone-browser/<account hash>
 ```
 
@@ -228,8 +322,8 @@ The real band's login lives in the git-ignored `.bz-creds` (line 1 login, line 2
 `chmod 600`); `.bz-test-creds` is the test band.
 
 **Saved logins** (`BrowserProfile`, both platforms): the browser keeps the platform's login
-in a profile directory that is private (`700`), one per Bandzone account (a test account can
-never act as the real band), with cookies encrypted by the desktop keyring
+in a profile directory that is private (`700`), one per account (a test account can never act
+as the real band), with cookies encrypted by the desktop keyring
 (`bzscraper.browser.password-store=auto`, default: the keyring when a desktop session bus
 is reachable, else Chromium's own store — on a server the private directory, owned by the
 service user on an encrypted volume, is the protection). A still-valid saved login is
@@ -260,11 +354,12 @@ the artist portal (artists.bandsintown.com) is driven in Chromium. Off by defaul
 
 ```
 bzscraper.bandsintown.selenium.enabled=true
-bzscraper.bandsintown.login / .password / .totp-secret   # authenticator base32 secret; NEVER in source
+bzscraper.bandsintown.login / .password / .totp-secret   # required when enabled (totp: authenticator base32); NEVER in source
+bzscraper.bandsintown.artist-name                         # required (rows + CSV carry it; no default)
+bzscraper.bandsintown.artist-id                           # optional; picks the artist on a multi-artist account
 bzscraper.bandsintown.notify-followers=false              # default: publish silently
-bzscraper.bandsintown.artist-id / .artist-name            # optional; to pick the artist
-bzscraper.bandsintown.selenium.profile-dir                # default ~/.bzscraper/bandsintown-browser
-bzscraper.bandsintown.pacing.min-ms / .max-ms             # human pauses between steps
+bzscraper.bandsintown.selenium.profile-dir                # default ~/.bzscraper/bandsintown-browser/<account hash>
+bzscraper.bandsintown.pacing.min-ms / .max-ms             # human pauses between steps (900 / 2600)
 ```
 
 - **Create** — Bulk Upload of a `BandsintownCsv` (template columns, ≤ 25 rows per upload)
@@ -288,7 +383,7 @@ bzscraper.bandsintown.pacing.min-ms / .max-ms             # human pauses between
 - **List (import)** — Upcoming + Past tabs' event lists (past is paged: `x-next-page`,
   more load on scroll) → `BitEventMapper` (no entry info on Bandsintown).
 - **Cancel/Delete** — Bandsintown has no cancelled state: both remove the event via the
-  row's "⋯" → Delete, reason CANCELED or OTHER. Already-gone = success (so reactivate =
+  row's "⋯" → Delete, `RemovalReason` CANCELED or OTHER. Already-gone = success (so reactivate =
   delete no-op + create). Editing a cancelled gig skips Bandsintown.
 - **Form cancel/remove** (`BandsintownFormCancel`/`BandsintownFormRemove`, `deleteEventInForm`)
   — past events (and whatever the list refused): the single-page form → Delete opens the same
@@ -300,15 +395,16 @@ bzscraper.bandsintown.pacing.min-ms / .max-ms             # human pauses between
 - **Human pacing** (`HumanPacer`, user requirement): random pauses, real mouse clicks,
   key-by-key typing, one browser at a time, saved login reused (authenticator code only
   when the session expired), no automation flags / HeadlessChrome UA.
-- Failures save a screenshot to `$TMPDIR/bzscraper-bandsintown-<step>.png`.
+- Setup problems (no login, no authenticator secret, several artists, no artist id) need the
+  user (NEEDS_USER), not a retry.
 
 ## Database
 
 H2 file DB at `./data/bzscraper-gigs` (`bzscraper.db.path`). The schema is owned by
-**Flyway** (`src/main/resources/db/migration/V<n>__*.sql`); Hibernate runs with
+**Flyway** (`adapters/persistence/src/main/resources/db/migration/V<n>__*.sql`); Hibernate runs with
 `ddl-auto=validate`, so every entity change needs a new migration (tests run the
 migrations on an in-memory H2 and fail on a mismatch). A pre-Flyway database is
-baselined at V1. V3 re-keys venue-less gigs (and their publications) to the `@city` identity; V4 adds the band-calendar tables (`calendar_rule`, `calendar_decision`); V5 the sync outbox (`sync_task`, `sync_log`); V6 the saved calendar copy and event → gig links (`calendar_event`, `calendar_link`); V7 the band's slot (`gig.slot_start/slot_end`); V8 a workflow run's step (`sync_task.step`); V9 the gig's address (`gig.street/postal_code/district/region/latitude/longitude`). The H2 version is pinned in `pom.xml` (`h2.version`) because its file
+baselined at V1. V3 re-keys venue-less gigs (and their publications) to the `@city` identity; V4 adds the band-calendar tables (`calendar_rule`, `calendar_decision`); V5 the sync outbox (`sync_task`, `sync_log`); V6 the saved calendar copy and event → gig links (`calendar_event`, `calendar_link`); V7 the band's slot (`gig.slot_start/slot_end`); V8 a workflow run's step (`sync_task.step`); V9 the gig's address (`gig.street/postal_code/district/region/latitude/longitude`); V10 the gig's optimistic-lock version (`gig.version`); V11 platform ids as text (`published_gig.platform` was an H2 enum — platforms come from adapters now); V12 the sync task's version and `app_setting`. H2's `AUTO_SERVER` (a second process on the same file) is opt-in: `bzscraper.db.options=;AUTO_SERVER=TRUE`. The H2 version is pinned in `pom.xml` (`h2.version`) because its file
 format changes between versions. `H2ScriptBackup` writes a plain-SQL `SCRIPT` backup on
 every start to `./data/backups` (one per day, newest 14 kept); restore with
 `org.h2.tools.RunScript`.
@@ -319,15 +415,33 @@ every start to `./data/backups` (one per day, newest 14 kept); restore with
 - Vaadin 25.0.5 (UI)
 - JSoup 1.22.1 (HTML scraping)
 - OpenCSV 5.12.0 (CSV)
-- Selenium 4.27.0 (Bandzone publishing) — needs a Chromium + chromedriver runtime
-- MapStruct 1.6.3
+- Selenium 4.27.0 (Bandzone + Bandsintown) — needs a Chromium + chromedriver runtime
 
 ## Testing
 
-JUnit 5 + Mockito + AssertJ (`spring-boot-starter-test`). Services/strategies are
-unit-tested against mocked ports; the domain and CSV exporter have direct unit tests;
-`JpaGigRepositoryTest` / `JpaPublishedGigStoreTest` cover persistence against the
-migrated schema.
+JUnit 5 + Mockito + AssertJ (`spring-boot-starter-test`). The domain has direct unit tests;
+service tests use `SyncFakes` (in-memory outbox/records/repository/settings, mutable clock,
+builders for the registry, engine, dispatcher, requests and catalog) and `TestPlatforms`
+(two made-up platforms' traits — the core tests never need the real adapters). The fake
+outbox and `JpaSyncOutbox` both pass `SyncOutboxContract` (application test-jar), so the
+fake can't drift from the real one. `bzscraper.sync.worker.enabled=false` in Spring tests
+(tasks queue, never run). Persistence tests run the migrations on an in-memory H2
+(`JpaGigConcurrencyTest`: the optimistic lock across real transactions).
+
+**Page objects against copies of the platforms' pages** (headless Chromium from
+`TestChromium`, browser test-jar; skipped where Chromium + chromedriver are missing, paths
+`-Dbzscraper.test.chromium` / `-Dbzscraper.test.chromedriver`, default `/usr/bin/…`;
+`PlatformBrowserTest` covers the browser lease itself): `BitPortalPagesTest` runs the Bandsintown
+pages against `PortalFixture` — an in-process HTTP server with copies of the portal's list
+and event-form pages (`src/test/resources/bandsintown-portal`, built like the real ones as
+the probes saw them: the row "⋯" menu, the reason dialog, a form with its own Delete,
+dropdowns and text areas, a debounced Google-places venue search) that plays the portal's
+API, with the real reply capture. `BandzonePagesTest` does the same with `BandzoneFixture`
+(`src/test/resources/bandzone-admin`: the edit form that re-renders after an autocomplete
+pick and shows what was stored, the city search with three Hranice, the club search, the
+delete tab with `confirm()`, the two-step wizard, the performers tab with its band search and
+"band without profile" stub). Change a page object → run these first;
+the live tests below then confirm against the real sites.
 
 `SeleniumBandzonePortalClientLiveTest` creates, edits (every field, incl. lineup and
 poster) and deletes a real Bandzone gig. Skipped unless `BZ_LIVE=true`; reads
@@ -337,7 +451,7 @@ against a test band.
 
 `SeleniumBitPortalClientLiveTest` creates a made-up Bandsintown event (published
 WITHOUT notifying followers), edits it and deletes it. Skipped unless `BIT_LIVE=true`;
-reads `BIT_LOGIN` / `BIT_PASSWORD` / `BIT_TOTP`; `BIT_CLEANUP_ID=<id>` only deletes a
+reads `BIT_LOGIN` / `BIT_PASSWORD` / `BIT_TOTP` / `BIT_ARTIST_NAME`; `BIT_CLEANUP_ID=<id>` only deletes a
 leftover event. There is no Bandsintown test artist — the event is public for ~1 minute.
 
 `CalendarClassificationLiveTest` prints how the shipped + band rules sort the REAL
