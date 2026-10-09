@@ -1,0 +1,148 @@
+openapi: 3.0.3
+info:
+  title: bzscraper — shared parts
+  version: "1"
+  description: |
+    What every part of the API shares: a gig as the form holds it, and how the API says no.
+    The features' specs refer to these schemas; the kernel generates them once
+    (sk.drabikp.bzscraper.gig.api) and the features use those classes.
+paths: {}
+components:
+  responses:
+    Refused:
+      description: A rule said no — nothing changed. The page says it from `code` and `args`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    BadRequest:
+      description: The request makes no sense (a missing field, an unknown platform).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: Nothing there (e.g. a gig deleted meanwhile).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Problem:
+      description: |
+        How the API says no. `code` names the case (gigBusy, gigIdentityTaken, changedMeanwhile,
+        deletedMeanwhile, invalidGig, noPlatform, noPlan, nothingSelected, notFound, badRequest,
+        badCredentials, calendarUnavailable, unexpected, …), `args` its details; `message` is the
+        English fallback.
+      type: object
+      required: [code, args, message]
+      properties:
+        code:
+          type: string
+        args:
+          type: object
+          additionalProperties:
+            type: string
+        message:
+          type: string
+          nullable: true
+    Country:
+      type: string
+      enum: [CZECHIA, SLOVAKIA]
+    EntryType:
+      type: string
+      enum: [FREE, VOLUNTARY, PAID]
+    GigDraft:
+      description: |
+        A gig as the form holds it: days and times as the band reads them in the gig's own
+        country. Times are "HH:mm" (or "HH:mm:ss"). The town's address details come from the
+        place search.
+      type: object
+      required: [title, date, time, endDate, endTime, slotDate, slotTime, slotEndTime, venue, city, country,
+                 street, postalCode, district, region, latitude, longitude, lineup, entry, price,
+                 description, facebookUrl, ticketUrl, posterUrl, cancelled]
+      properties:
+        title:
+          type: string
+        date:
+          type: string
+          format: date
+          nullable: true
+        time:
+          $ref: '#/components/schemas/TimeOfDay'
+        endDate:
+          description: Null with an endTime — the day it starts, or the next one when the end is earlier.
+          type: string
+          format: date
+          nullable: true
+        endTime:
+          $ref: '#/components/schemas/TimeOfDay'
+        slotDate:
+          description: When the band itself plays (a festival over several days); with slotTime.
+          type: string
+          format: date
+          nullable: true
+        slotTime:
+          $ref: '#/components/schemas/TimeOfDay'
+        slotEndTime:
+          $ref: '#/components/schemas/TimeOfDay'
+        venue:
+          description: Null or blank — not known yet (the gig is then known by its town).
+          type: string
+          nullable: true
+        city:
+          type: string
+          nullable: true
+        country:
+          allOf:
+            - $ref: '#/components/schemas/Country'
+          nullable: true
+        street:
+          type: string
+          nullable: true
+        postalCode:
+          type: string
+          nullable: true
+        district:
+          type: string
+          nullable: true
+        region:
+          type: string
+          nullable: true
+        latitude:
+          type: number
+          format: double
+          nullable: true
+        longitude:
+          type: number
+          format: double
+          nullable: true
+        lineup:
+          description: The other bands.
+          type: array
+          items:
+            type: string
+        entry:
+          $ref: '#/components/schemas/EntryType'
+        price:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        facebookUrl:
+          type: string
+          nullable: true
+        ticketUrl:
+          type: string
+          nullable: true
+        posterUrl:
+          type: string
+          nullable: true
+        cancelled:
+          type: boolean
+    TimeOfDay:
+      description: '"HH:mm" or "HH:mm:ss".'
+      type: string
+      pattern: '^\d{2}:\d{2}(:\d{2})?$'
+      nullable: true

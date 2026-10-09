@@ -1,0 +1,442 @@
+openapi: 3.0.3
+info:
+  title: bzscraper — band calendar
+  version: "1"
+  description: |
+    The band's calendar (read-only): its events sorted into gigs and the rest and checked
+    against the catalog, reading it again, the user's verdicts, and putting an event into the
+    catalog or linking it to a gig there. A linked gig the calendar moved or cancelled is
+    changed through the catalog's API, so the platforms follow. Event notes may hold fees and
+    phones — only ever shown in the app. Every change is announced on the live updates (calendar).
+servers:
+  - url: /
+tags:
+  - name: Calendar
+paths:
+  /api/calendar:
+    get:
+      tags: [Calendar]
+      operationId: calendarOverview
+      summary: The calendar as last read (not reading it again).
+      responses:
+        "200":
+          description: The events, latest first; unconfigured — no rows.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarOverview'
+  /api/calendar/read:
+    post:
+      tags: [Calendar]
+      operationId: readCalendar
+      summary: Reads the calendar again and compares it with the last read.
+      responses:
+        "200":
+          description: The calendar as now read.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarOverview'
+        "502":
+          description: The calendar couldn't be read (code calendarUnavailable).
+          content:
+            application/json:
+              schema:
+                $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/schemas/Problem'
+  /api/calendar/seen:
+    post:
+      tags: [Calendar]
+      operationId: seenAll
+      summary: Every change has been seen.
+      responses:
+        "204":
+          description: Seen.
+  /api/calendar/link-same-day:
+    post:
+      tags: [Calendar]
+      operationId: linkSameDay
+      summary: Links every gig event to the only catalog gig that day not linked to another event.
+      responses:
+        "200":
+          description: How many were linked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Linked'
+  /api/calendar/rules:
+    get:
+      tags: [Calendar]
+      operationId: calendarRules
+      responses:
+        "200":
+          description: The band profile's rules (shipped presets and the band's own).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Rule'
+  /api/calendar/events/{eventId}/decide:
+    parameters:
+      - $ref: '#/components/parameters/EventId'
+    post:
+      tags: [Calendar]
+      operationId: decideEvent
+      summary: The user's verdict — GIG or NOT_GIG — which always wins over the rules.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Verdict'
+      responses:
+        "204":
+          description: Remembered.
+        "400":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/BadRequest'
+  /api/calendar/events/{eventId}/forget:
+    parameters:
+      - $ref: '#/components/parameters/EventId'
+    post:
+      tags: [Calendar]
+      operationId: forgetVerdict
+      summary: Forgets the verdict; the rules decide again.
+      responses:
+        "204":
+          description: Forgotten.
+  /api/calendar/events/{eventId}/seen:
+    parameters:
+      - $ref: '#/components/parameters/EventId'
+    post:
+      tags: [Calendar]
+      operationId: seenEvent
+      summary: The event's change has been seen (an event gone from the calendar is then forgotten).
+      responses:
+        "204":
+          description: Seen.
+  /api/calendar/events/{eventId}/gig:
+    parameters:
+      - $ref: '#/components/parameters/EventId'
+    post:
+      tags: [Calendar]
+      operationId: addEventToCatalog
+      summary: Adds the gig (the pre-filled form as the user checked it) to the catalog, linked to the event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddToCatalog'
+      responses:
+        "204":
+          description: Added and linked.
+        "409":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/Refused'
+  /api/calendar/events/{eventId}/link:
+    parameters:
+      - $ref: '#/components/parameters/EventId'
+    post:
+      tags: [Calendar]
+      operationId: linkEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Link'
+      responses:
+        "204":
+          description: Linked.
+        "409":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/Refused'
+  /api/calendar/events/{eventId}/unlink:
+    parameters:
+      - $ref: '#/components/parameters/EventId'
+    post:
+      tags: [Calendar]
+      operationId: unlinkEvent
+      responses:
+        "204":
+          description: Unlinked.
+components:
+  parameters:
+    EventId:
+      name: eventId
+      in: path
+      required: true
+      description: The calendar event's stable id.
+      schema:
+        type: string
+  schemas:
+    CalendarKind:
+      type: string
+      enum: [GIG, UNSURE, NOT_GIG]
+    CalendarFilter:
+      type: string
+      enum: [NEEDS_A_LOOK, MISSING, NOT_SURE, GIGS, NOT_GIGS, DECIDED, ALL]
+    CalendarOverview:
+      type: object
+      required: [configured, lastRead, counts, rows]
+      properties:
+        configured:
+          type: boolean
+        lastRead:
+          type: string
+          format: date-time
+          nullable: true
+        counts:
+          allOf:
+            - $ref: '#/components/schemas/CalendarCounts'
+          nullable: true
+        rows:
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarRow'
+    CalendarCounts:
+      description: The summary line's numbers; `linkable` — what link-same-day would link.
+      type: object
+      required: [events, gigs, notSure, missing, changes, differences, linkable, decided]
+      properties:
+        events:
+          type: integer
+          format: int64
+        gigs:
+          type: integer
+          format: int64
+        notSure:
+          type: integer
+          format: int64
+        missing:
+          type: integer
+          format: int64
+        changes:
+          type: integer
+          format: int64
+        differences:
+          type: integer
+          format: int64
+        linkable:
+          type: integer
+          format: int64
+        decided:
+          type: integer
+          format: int64
+    CalendarRow:
+      description: |
+        One event: how the rules sorted it and why, what it says of a gig (to pre-fill the form),
+        how it matches the catalog, what changed since the user last looked. `filters` — the
+        views it is in; `linkable` — link-same-day takes it.
+      type: object
+      required: [eventId, title, location, notes, start, end, allDay, kind, suggested, decidedByUser, status, score,
+                 reasons, draft, match, change, removed, missingFromCatalog, needsAttention, linkable, filters]
+      properties:
+        eventId:
+          type: string
+        title:
+          type: string
+        location:
+          type: string
+        notes:
+          type: string
+        start:
+          description: Local date-time.
+          type: string
+        end:
+          description: Local date-time.
+          type: string
+        allDay:
+          type: boolean
+        kind:
+          $ref: '#/components/schemas/CalendarKind'
+        suggested:
+          $ref: '#/components/schemas/CalendarKind'
+        decidedByUser:
+          type: boolean
+        status:
+          type: string
+          enum: [CONFIRMED, TENTATIVE, CANCELLED]
+        score:
+          type: integer
+        reasons:
+          type: array
+          items:
+            $ref: '#/components/schemas/Reason'
+        draft:
+          $ref: '#/components/schemas/CalendarDraft'
+        match:
+          $ref: '#/components/schemas/CatalogMatch'
+        change:
+          allOf:
+            - $ref: '#/components/schemas/CalendarChange'
+          nullable: true
+        removed:
+          type: boolean
+        missingFromCatalog:
+          type: boolean
+        needsAttention:
+          type: boolean
+        linkable:
+          type: boolean
+        filters:
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarFilter'
+    Reason:
+      description: A rule that matched; `why` names the rule kind (the page says it), `value` what it matched.
+      type: object
+      required: [why, value, weight, text]
+      properties:
+        why:
+          type: string
+        value:
+          type: string
+          nullable: true
+        weight:
+          type: integer
+        text:
+          type: string
+    CalendarDraft:
+      description: What the event says of a gig, to pre-fill the gig form. Times "HH:mm".
+      type: object
+      required: [title, date, showTime, eventStart, venue, city, country, street, postalCode]
+      properties:
+        title:
+          type: string
+        date:
+          type: string
+          format: date
+        showTime:
+          type: string
+          nullable: true
+        eventStart:
+          type: string
+          nullable: true
+        venue:
+          type: string
+          nullable: true
+        city:
+          type: string
+          nullable: true
+        country:
+          allOf:
+            - $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/schemas/Country'
+          nullable: true
+        street:
+          type: string
+          nullable: true
+        postalCode:
+          type: string
+          nullable: true
+    CatalogMatch:
+      type: object
+      required: [state, gig, sameDay, differences]
+      properties:
+        state:
+          description: LINKED — to a gig; SAME_DAY — not linked, the catalog has gigs that day; MISSING — nothing.
+          type: string
+          enum: [LINKED, SAME_DAY, MISSING]
+        gig:
+          allOf:
+            - $ref: '#/components/schemas/GigRef'
+          nullable: true
+        sameDay:
+          type: array
+          items:
+            $ref: '#/components/schemas/GigRef'
+        differences:
+          type: array
+          items:
+            $ref: '#/components/schemas/MatchDifference'
+    MatchDifference:
+      description: How the calendar and the linked gig differ; `calendar` / `catalog` the values compared.
+      type: object
+      required: [kind, text, calendar, catalog]
+      properties:
+        kind:
+          type: string
+          enum: [DATE, SHOW_TIME, CANCELLED, REMOVED]
+        text:
+          type: string
+        calendar:
+          type: string
+          nullable: true
+        catalog:
+          type: string
+          nullable: true
+    GigRef:
+      type: object
+      required: [id, title, start, city, cancelled]
+      properties:
+        id:
+          description: The gig's token.
+          type: string
+        title:
+          type: string
+        start:
+          description: Local date-time.
+          type: string
+        city:
+          type: string
+        cancelled:
+          type: boolean
+    CalendarChange:
+      type: object
+      required: [type, fields, suggestedBefore, at]
+      properties:
+        type:
+          type: string
+          enum: [NEW, CHANGED, REMOVED, RETURNED]
+        fields:
+          type: array
+          items:
+            type: string
+            enum: [TITLE, TIME, PLACE, NOTES, STATUS]
+        suggestedBefore:
+          allOf:
+            - $ref: '#/components/schemas/CalendarKind'
+          nullable: true
+        at:
+          type: string
+          format: date-time
+    Verdict:
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          $ref: '#/components/schemas/CalendarKind'
+    AddToCatalog:
+      type: object
+      required: [gig]
+      properties:
+        gig:
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/schemas/GigDraft'
+    Link:
+      type: object
+      required: [gig]
+      properties:
+        gig:
+          description: The gig's token.
+          type: string
+    Linked:
+      type: object
+      required: [linked]
+      properties:
+        linked:
+          type: integer
+    Rule:
+      type: object
+      required: [kind, value, weight, weighted, origin, enabled]
+      properties:
+        kind:
+          type: string
+        value:
+          type: string
+          nullable: true
+        weight:
+          type: integer
+        weighted:
+          type: boolean
+        origin:
+          type: string
+        enabled:
+          type: boolean

@@ -1,0 +1,83 @@
+package sk.drabikp.bzscraper.sync.application;
+
+import sk.drabikp.bzscraper.gig.application.UserFacingException;
+import sk.drabikp.bzscraper.sync.application.port.in.SyncLogUseCase;
+import sk.drabikp.bzscraper.sync.application.port.out.SyncNotifier;
+import sk.drabikp.bzscraper.sync.application.port.out.SyncOutbox;
+import sk.drabikp.bzscraper.sync.application.port.out.SyncTrigger;
+import sk.drabikp.bzscraper.sync.domain.SyncCounts;
+import sk.drabikp.bzscraper.sync.domain.SyncLogEntry;
+import sk.drabikp.bzscraper.sync.domain.SyncStatus;
+import sk.drabikp.bzscraper.sync.domain.SyncTask;
+
+import java.time.Clock;
+import java.util.List;
+
+/** The sync log for the user: reading it, and retrying or discarding what the worker gave up on. */
+public class SyncLogService implements SyncLogUseCase {
+
+    /** How many of the latest tasks "all" shows. */
+    static final int LATEST = 500;
+
+    private final SyncOutbox outbox;
+    private final SyncTrigger trigger;
+    private final SyncNotifier notifier;
+    private final Clock clock;
+
+    public SyncLogService(SyncOutbox outbox, SyncTrigger trigger, SyncNotifier notifier, Clock clock) {
+        this.outbox = outbox;
+        this.trigger = trigger;
+        this.notifier = notifier;
+        this.clock = clock;
+    }
+
+    @Override
+    public List<SyncTask> unfinished() {
+        return outbox.unfinished();
+    }
+
+    @Override
+    public List<SyncTask> recent(int limit) {
+        return outbox.recent(limit);
+    }
+
+    @Override
+    public List<SyncTask> tasks(Show show) {
+        return switch (show) {
+            case ALL -> outbox.recent(LATEST);
+            case OPEN -> outbox.unfinished().reversed();
+            case FAILED -> outbox.unfinished().stream().filter(t -> t.status() == SyncStatus.FAILED).toList().reversed();
+        };
+    }
+
+    @Override
+    public SyncCounts counts() {
+        return SyncCounts.of(outbox.unfinished());
+    }
+
+    @Override
+    public List<SyncLogEntry> log(long taskId) {
+        return outbox.log(taskId);
+    }
+
+    @Override
+    public void retry(long taskId) {
+        SyncTask task = outbox.find(taskId).orElseThrow(() -> new IllegalArgumentException("no sync task " + taskId));
+        if (task.status() != SyncStatus.FAILED && task.status() != SyncStatus.DISCARDED) {
+            throw new UserFacingException("Only a failed or discarded task can be retried — it has moved on meanwhile.");
+        }
+        outbox.requeue(taskId, clock.instant());
+        trigger.wake();
+        notifier.changed();
+    }
+
+    @Override
+    public void discard(long taskId) {
+        SyncTask task = outbox.find(taskId).orElseThrow(() -> new IllegalArgumentException("no sync task " + taskId));
+        if (task.status() != SyncStatus.FAILED && task.status() != SyncStatus.PENDING) {
+            throw new UserFacingException("Only a waiting or failed task can be discarded — it has moved on meanwhile.");
+        }
+        outbox.discard(taskId, clock.instant());
+        notifier.changed();
+    }
+}

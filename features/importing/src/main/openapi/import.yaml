@@ -1,0 +1,193 @@
+openapi: 3.0.3
+info:
+  title: bzscraper — import
+  version: "1"
+  description: |
+    Bringing the band's existing gigs from the platforms into the catalog, linked to their
+    platform events. Reading the platforms takes a while (a browser for some), so it runs in the
+    background: POST /read starts it, the live update `import` tells when it ended, GET returns
+    the plan; POST /apply imports what the user decided, naming the plan's proposals by index.
+    One plan at a time, kept until applied or read again.
+servers:
+  - url: /
+tags:
+  - name: Import
+paths:
+  /api/import:
+    get:
+      tags: [Import]
+      operationId: importState
+      responses:
+        "200":
+          description: What can be read, whether a read runs, and the plan when there is one.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportState'
+  /api/import/read:
+    post:
+      tags: [Import]
+      operationId: readForImport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportRead'
+      responses:
+        "202":
+          description: Reading (or a read already runs).
+        "400":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/BadRequest'
+        "409":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/Refused'
+  /api/import/apply:
+    post:
+      tags: [Import]
+      operationId: applyImport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportApply'
+      responses:
+        "200":
+          description: Imported.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportResult'
+        "400":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/BadRequest'
+        "409":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/Refused'
+components:
+  schemas:
+    ImportState:
+      type: object
+      required: [platforms, reading, readError, plan]
+      properties:
+        platforms:
+          description: The platforms that can be read.
+          type: array
+          items:
+            type: string
+        reading:
+          type: boolean
+        readError:
+          type: string
+          nullable: true
+        plan:
+          allOf:
+            - $ref: '#/components/schemas/ImportPlan'
+          nullable: true
+    ImportPlan:
+      type: object
+      required: [proposals, alreadyLinked, skipped, failures]
+      properties:
+        proposals:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportProposal'
+        alreadyLinked:
+          type: integer
+        skipped:
+          type: array
+          items:
+            type: string
+        failures:
+          description: Per platform that couldn't be read, why.
+          type: object
+          additionalProperties:
+            type: string
+    ImportProposal:
+      description: |
+        One gig to add or link. `versions` — the distinct details found, the catalog's first
+        (platform null); `foundOn` — the platforms with a copy; `suggested` — matched to a
+        catalog gig on the same day and town (the user confirms).
+      type: object
+      required: [index, date, inCatalog, suggested, hasConflict, foundOn, versions]
+      properties:
+        index:
+          type: integer
+        date:
+          type: string
+          format: date
+        inCatalog:
+          type: boolean
+        suggested:
+          type: boolean
+        hasConflict:
+          type: boolean
+        foundOn:
+          type: array
+          items:
+            type: string
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportVersion'
+    ImportVersion:
+      type: object
+      required: [platform, title, start, end, venue, city, cancelled]
+      properties:
+        platform:
+          type: string
+          nullable: true
+        title:
+          type: string
+        start:
+          description: Local date-time, e.g. 2026-10-17T20:30.
+          type: string
+        end:
+          type: string
+          nullable: true
+        venue:
+          type: string
+          nullable: true
+        city:
+          type: string
+        cancelled:
+          type: boolean
+    ImportRead:
+      type: object
+      required: [platforms]
+      properties:
+        platforms:
+          type: array
+          items:
+            type: string
+    ImportDecision:
+      description: "`version` — the index into the proposal's versions whose details to keep."
+      type: object
+      required: [index, include, sameGig, version]
+      properties:
+        index:
+          type: integer
+        include:
+          type: boolean
+        sameGig:
+          type: boolean
+        version:
+          type: integer
+    ImportApply:
+      type: object
+      required: [decisions]
+      properties:
+        decisions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportDecision'
+    ImportResult:
+      type: object
+      required: [added, updated, linked, skipped]
+      properties:
+        added:
+          type: integer
+        updated:
+          type: integer
+        linked:
+          type: integer
+        skipped:
+          type: integer

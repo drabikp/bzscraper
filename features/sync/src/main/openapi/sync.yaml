@@ -1,0 +1,232 @@
+openapi: 3.0.3
+info:
+  title: bzscraper — sync
+  version: "1"
+  description: |
+    The platform sync: every platform task and its history, Retry and Discard of failed work,
+    Pause / Resume, and the platforms held back by their circuit breakers. Every change here
+    is announced on the live updates (sync, gigs).
+servers:
+  - url: /
+tags:
+  - name: Sync
+paths:
+  /api/sync/tasks:
+    get:
+      tags: [Sync]
+      operationId: listTasks
+      parameters:
+        - name: show
+          in: query
+          description: all — the latest (500); open — not finished; failed — waiting for the user.
+          schema:
+            type: string
+            enum: [all, open, failed]
+            default: all
+      responses:
+        "200":
+          description: The tasks, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+  /api/sync/tasks/{id}/log:
+    get:
+      tags: [Sync]
+      operationId: taskLog
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        "200":
+          description: The task's history, oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LogEntry'
+  /api/sync/tasks/{id}/retry:
+    post:
+      tags: [Sync]
+      operationId: retryTask
+      summary: Runs a failed (or discarded) task again, from the step where it stopped.
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        "204":
+          description: Queued again.
+        "409":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/Refused'
+  /api/sync/tasks/{id}/discard:
+    post:
+      tags: [Sync]
+      operationId: discardTask
+      summary: Gives up on a waiting or failed task — the platform is left as it is.
+      parameters:
+        - $ref: '#/components/parameters/TaskId'
+      responses:
+        "204":
+          description: Discarded.
+        "409":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/Refused'
+  /api/sync/status:
+    get:
+      tags: [Sync]
+      operationId: syncStatus
+      responses:
+        "200":
+          description: Paused or not, the platforms' breakers, the open work by what it is doing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncStatus'
+  /api/sync/pause:
+    post:
+      tags: [Sync]
+      operationId: pauseSync
+      summary: The gig in progress finishes, nothing new starts; survives a restart.
+      responses:
+        "204":
+          description: Paused.
+  /api/sync/resume:
+    post:
+      tags: [Sync]
+      operationId: resumeSync
+      responses:
+        "204":
+          description: Running again.
+  /api/sync/breakers/{platform}/resume:
+    post:
+      tags: [Sync]
+      operationId: resumePlatform
+      summary: Lets a platform held back by its circuit breaker run again now.
+      parameters:
+        - name: platform
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Running again.
+        "400":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/BadRequest'
+components:
+  parameters:
+    TaskId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  schemas:
+    SyncAction:
+      type: string
+      enum: [PUBLISH, UPDATE, CANCEL, DELETE, REACTIVATE]
+    SyncTaskStatus:
+      type: string
+      enum: [PENDING, RUNNING, DONE, FAILED, DISCARDED]
+    Task:
+      description: A platform task. `retrying` — failed and tried again at nextAttemptAt.
+      type: object
+      required: [id, gigId, gigLabel, platform, action, status, retrying, attempts, createdAt, updatedAt,
+                 nextAttemptAt, message, step]
+      properties:
+        id:
+          type: integer
+          format: int64
+        gigId:
+          description: The gig's token (its address in the API).
+          type: string
+        gigLabel:
+          type: string
+        platform:
+          type: string
+        action:
+          $ref: '#/components/schemas/SyncAction'
+        status:
+          $ref: '#/components/schemas/SyncTaskStatus'
+        retrying:
+          type: boolean
+        attempts:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        nextAttemptAt:
+          type: string
+          format: date-time
+          nullable: true
+        message:
+          type: string
+          nullable: true
+        step:
+          description: Where its workflow is, e.g. "bulk edit".
+          type: string
+          nullable: true
+    LogEntry:
+      type: object
+      required: [at, message]
+      properties:
+        at:
+          type: string
+          format: date-time
+        message:
+          type: string
+    Breaker:
+      description: |
+        A platform whose breaker isn't plainly closed: `failures` in a row; `held` while its work
+        is held back (until heldUntil); `trial` when the next batch decides.
+      type: object
+      required: [platform, failures, heldUntil, held, trial, lastFailure]
+      properties:
+        platform:
+          type: string
+        failures:
+          type: integer
+        heldUntil:
+          type: string
+          format: date-time
+          nullable: true
+        held:
+          type: boolean
+        trial:
+          type: boolean
+        lastFailure:
+          type: string
+          nullable: true
+    SyncCounts:
+      description: The open tasks by what they are doing now.
+      type: object
+      required: [queued, running, retrying, failed]
+      properties:
+        queued:
+          type: integer
+          format: int64
+        running:
+          type: integer
+          format: int64
+        retrying:
+          type: integer
+          format: int64
+        failed:
+          type: integer
+          format: int64
+    SyncStatus:
+      type: object
+      required: [paused, breakers, counts]
+      properties:
+        paused:
+          type: boolean
+        breakers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Breaker'
+        counts:
+          $ref: '#/components/schemas/SyncCounts'
