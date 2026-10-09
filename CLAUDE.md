@@ -9,37 +9,81 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./mvnw -pl app -am spring-boot:run                     # Run (port 8080; working dir = repo root)
 ./mvnw test                                            # Run all tests
 ./mvnw test -Dtest=GigPublishingServiceTest -Dsurefire.failIfNoSpecifiedTests=false   # One class
-./mvnw -pl adapters/bandzone -am test                  # One module (and what it needs)
+./mvnw -pl platforms/bandzone -am test                 # One module (and what it needs)
 ./mvnw -Pproduction -pl app -am package                # Production build (Vaadin frontend optimization)
 ```
 
-**Modules** (Maven multi-module; packages unchanged, so a class's module follows its package):
+**Structure: vertical slices.** One Maven module per feature, each holding its own domain,
+application (use cases + ports) and adapters (persistence, pages, workers) in packages
+`sk.drabikp.bzscraper.<feature>.{domain, application, application.port.in|out, adapter.in.*,
+adapter.out.*, config}`. `gig` is the shared kernel, `ui` what every page shares; platforms
+plug into the features' ports.
 
 ```
-domain/                 bzscraper-domain        framework-free model + rules; test-jar: TestGigs, TestPlatforms
-application/            bzscraper-application   use cases, ports, workflow engine; framework-free;
-                                                test-jar: SyncOutboxContract
-adapters/persistence    JPA entities/stores, Flyway migrations (db/migration), H2 backup
-adapters/browser        PlatformBrowser (a platform's one Chromium), BrowserProfile, WarmBrowser,
-                        BrowserProperties/SeleniumOptions; test-jar: TestChromium
-adapters/bandzone       Bandzone: PlatformTraits, scrape + Selenium client, sync steps, properties
-adapters/bandsintown    Bandsintown: PlatformTraits, portal client, sync steps, properties + the
-                        CSV download (adapter.out.csv)
-adapters/calendar       iCal feed, profile file format, shipped presets (calendar/*.profile)
-adapters/places         Photon town search
-adapters/web            Vaadin views (the theme itself lives in app/src/main/frontend)
-adapters/rest           REST endpoint (the catalog's gigs)
-adapters/sync-worker    SyncWorker, PlatformCheckSchedule, sync/check properties
-app/                    BzscraperApplication, config/ wiring, application.properties, Vaadin theme
-                        + dev bundle (Vaadin takes app/ as its project folder)
+features/gig        shared kernel: Gig + its value objects (GigId.key() = how records refer to a
+                    gig), Platform/PlatformTraits/Platforms, Publication, GigRepository/
+                    PublishedGigStore/Transactions, UserFacingException, ChangeListeners, TextFold;
+                    their JPA persistence, SpringTransactions, H2 backup, the Clock; THE schema
+                    (db/migration, Flyway); test-jar: gig.domain.TestGigs, gig.domain.platform.TestPlatforms
+features/ui         the pages' kit: UserErrors (a refused/failed action → the user), Notices
+features/places     Town, TownChoice, place search (Photon)
+features/sync       outbox (SyncTask…, SyncLabels: how sync work reads), queueing (QueueSyncWork),
+                    read-only state (SyncStateUseCase), watching (WatchSyncUseCase ← SyncChanges),
+                    workflow engine + step ports (SyncStep, OneAtATimeStep), breakers, pause,
+                    settings, sync log page, worker; test-jar: SyncFakes, SyncOutboxContract
+features/catalog    catalog use cases, GigWrites (← CatalogWrites), GigMovedListener, GigExporter,
+                    catalog + add pages, adapter.in.web.form.GigForm; test-jar: CatalogFakes
+features/importing  import planner/merge, GigImporter port (+ PlatformReads), import page
+features/check      Reconciler, platform check service + page + nightly schedule
+features/calendar   calendar domain (+ domain.event: the calendar's events; + domain.rules: profile
+                    and classifier), review service, stores, iCal feed, profile file, calendar page;
+                    shipped presets (calendar/*.profile)
+platforms/browser   PlatformBrowser, BrowserProfile, WarmBrowser, properties; test-jar: TestChromium
+platforms/bandzone      bandzone (traits, properties, exception) · scrape · portal (client API, stub)
+                        · portal.selenium (the Selenium client + page objects) · step · rest
+                        (the legacy `/gigs/{band_slug}` endpoint)
+platforms/bandsintown   bandsintown (traits, properties, exception, RemovalReason) · portal ·
+                        portal.selenium (+ the event list → gig mapping) · step · importing · csv
+app/                BzscraperApplication, shell (AppShellConfig, MainLayout: the menu), application
+                    .properties, Vaadin theme + dev bundle (Vaadin takes app/ as its project folder);
+                    ArchitectureTest, PlatformNamesTest
 ```
 
-Adapters depend on `application` (and `browser`), never on each other otherwise; only `app` sees
-them all. Configuration is typed: a `@ConfigurationProperties` record per module
-(`BandzoneProperties`, `BandsintownProperties`, `BrowserProperties`, `CalendarProperties`,
-`SyncProperties`, `CheckProperties`, `BackupProperties`, `PlacesProperties`; secrets are
-hidden in their `toString`); a platform switched on without its login stops the app at start. `spring-boot:run` runs in the repo root (`./data`, `./calendar` are relative to it).
-Spring tests: `app` (whole context) and `persistence` (its own `PersistenceTestApplication`).
+Module order (Maven forbids cycles): `gig ← ui ← places ← sync ← catalog ← importing ← check`,
+`catalog ← calendar`; platforms depend on the features whose ports they implement; only `app`
+sees everything. Another module uses a feature ONLY through its `domain` and its ports
+(`application.port.in` to call, `.out` to implement) — never its services, adapters or wiring
+(e.g. the calendar and Import write gigs through `GigWrites`, the check asks the sync through
+`SyncStateUseCase`, pages follow the sync through `WatchSyncUseCase`). The one exception is a
+feature's form (`adapter.in.web.form`), which another feature's page may embed (the calendar
+pre-fills `GigForm` with a `GigForm.Draft`). Where a feature lower in the order needs something
+from a higher one, the lower one owns a port and the higher one implements it
+(`GigMovedListener`: the calendar's links follow a gig's identity move). The menu is the app's
+`MainLayout` (`@Layout`), built from each page's own `@Menu` — no page links to another
+feature's page. Each feature wires its own services (`<feature>.config.<Feature>Configuration`,
+next to its properties record); the implementations are public only so that wiring can build
+them — `ArchitectureTest` keeps everyone else on the ports. Inside a platform, the steps, the
+importer and the endpoint use the portal client; its Selenium implementation and page objects
+(package-private) are used by nothing else.
+`ArchitectureTest` (ArchUnit): domain depends only on the JDK and domain code; application code
+uses no framework, logger, adapter, config or page kit; a feature is used from outside only
+through its domain, ports and forms; the kernel's persistence and wiring are its own; the
+kernel and the page kit know no feature; the features know no platform, nor a platform another;
+a platform's browser code stays behind its portal client; no cycles between modules nor between
+any two packages. `PlatformNamesTest`: no feature source (code, string or comment) names a
+platform.
+
+Configuration is typed: a `@ConfigurationProperties` record per module (`<feature>.config` for
+the features: `CalendarProperties`, `SyncProperties`, `CheckProperties`, `BackupProperties`,
+`PlacesProperties`; the platform's root package for `BandzoneProperties`,
+`BandsintownProperties`, `BrowserProperties`; secrets are hidden in their `toString`); a
+platform switched on without its login stops the app at start.
+`spring-boot:run` runs in the repo root (`./data`, `./calendar` are relative to it).
+Spring tests: `app` (whole context) and each module with persistence (`gig`, `sync`, `calendar`:
+its own `<Feature>PersistenceTestApplication` over its persistence package). These are marked
+`@TestComponent`: a module that uses another's test-jar gets, in a reactor build (`./mvnw test`),
+that module's whole test-classes folder (only the packaged jar is filtered to the shared helpers),
+and its context scan must skip the other module's test application.
 
 ## What This Project Does
 
@@ -48,94 +92,31 @@ are kept in a local catalog (H2 file DB, the source of truth), can be imported f
 Bandzone.cz, and are **published to listing platforms** (Bandzone, Bandsintown). Edits,
 cancel, reactivate and delete in the catalog are propagated to every platform the gig
 was published to. A Vaadin UI drives it; a per-platform file download (`GigExporter`, the
-Bandsintown CSV) and a REST endpoint (`/gigs/{band_slug}`, the catalog's gigs) exist too.
+Bandsintown CSV) and a REST endpoint (`/gigs/{band_slug}`, the catalog's gigs with their
+Bandzone concert — in the Bandzone module, where it began) exist too.
 
 ## Architecture
 
-Hexagonal (ports & adapters) under `sk.drabikp.bzscraper`. **The core is platform-agnostic**:
-domain and application never name a platform or branch on one. A `Platform` is a value (an id
-string); what a platform IS comes from its adapter — a `PlatformTraits` bean (display name,
-keeps cancelled events, lists the band's slot, carries admission, import precedence, event
-URL) and the `SyncStep`s / `GigImporter` / `GigExporter` beans it provides. `Platforms` (the
-registry, in import-precedence order) is built from the traits beans. A new platform is a new
-adapter module with those beans — the core, the engine and the UI don't change.
+Hexagonal inside every feature module (ports & adapters), see **Structure** above. **The core is
+platform-agnostic**: no feature names a platform or branches on one. A `Platform` is a value (an
+id string); what a platform IS comes from its module — a `PlatformTraits` bean (display name,
+keeps cancelled events, lists the band's slot, carries admission, import precedence, event URL)
+and the `SyncStep`s / `GigImporter` / `GigExporter` beans it provides. `Platforms` (the registry,
+in import-precedence order) is built from the traits beans. A new platform is a new module under
+`platforms/` with those beans — the features, the engine and the pages don't change.
 
-- **domain/** — framework-free core.
-  - `model/` — `Gig` aggregate (immutable record; invariants in the compact constructor) built
-    from value objects `GigSchedule` (the whole event — a festival may span days — plus the
-    band's own optional `Slot`), `Location` (+ `Address`), `Admission`; identified by `GigId`
-    (start date + normalized venue, or `@` + city when the venue is unknown/"TBA" — it
-    **changes** when an edit moves the date or venue). `CityName` compares city spellings
-    across platforms (accents, "Prague" = "Praha", "Vsetín 1"). `Platform`, `PlatformTraits`,
-    `Platforms`; sync types (`SyncTask`, `SyncAction`, `SyncStatus` with its allowed
-    transitions `canBecome`, `SyncLogEntry`, `StepType`, `StepOutcome`, `QueueResult`);
-    `Publication` (a gig's copy on a platform); import types (`ImportedGig`, `ImportProposal`,
-    `ImportPlan`, `ImportDecision`, `ImportResult`); platform check (`Drift`, `PlatformCheck`);
-    band calendar types (`CalendarEvent`, `BandProfile` of `ProfileRule`s by
-    `RuleKind`/`RuleOrigin`, `CalendarClassification`, `CalendarRow`, `CalendarFilter` — the
-    calendar page's views and counts); `Town`.
-  - `service/` — `Workflows` (each action's step types), `MootWork` (work that became
-    unnecessary), `SyncRetryPolicy`, `ImportPlanner`, `GigMerge`, `Reconciler` (platform
-    check), `CalendarEventClassifier`, `CalendarGigDrafter`, `CalendarChanges`,
-    `CalendarCatalogMatcher`, `TownChoice`.
-- **application/** — use cases and the ports they depend on.
-  - `port/in/` — catalog (`SaveGig`, `ListGigs`, `UpdateGig`, `CancelGig`, `DeleteGig` — each
-    returns what it queued), `PublishGigsUseCase`, `ResyncGigUseCase`, `ExportGigsUseCase`,
-    `SyncLogUseCase`, `DispatchSyncUseCase`, `PauseSyncUseCase`, `PlatformBreakerUseCase`,
-    `CheckPlatformsUseCase`, `ImportGigsUseCase`, `ReviewCalendarUseCase`,
-    `CalendarCatalogUseCase`, `FindPlacesUseCase`, `ListPublicationsUseCase`, `SyncWorkSignal`;
-    `UserFacingException` (a rule's refusal the user reads: `GigBusyException`,
-    `GigIdentityTakenException`, `ConcurrentChangeException`).
-  - `port/out/` — `GigRepository`, `PublishedGigStore`, `Transactions`, `SyncOutbox`,
-    `SettingsStore`, `SyncTrigger`, `SyncNotifier`, per-platform strategies `SyncStep` (+
-    `OneAtATimeStep`), `GigImporter`, `GigExporter`; `PlatformException` with its
-    `FailureKind`; `PlaceSearch`, calendar ports (`CalendarFeed`, `BandProfileStore`,
-    `CalendarDecisionStore`, `CalendarSnapshotStore`, `CalendarLinkStore`).
-  - `service/` — `CatalogWrites` (THE write path for gigs, see below), `GigCatalogService`,
-    `GigPublishingService`, `GigResyncService` (these queue platform work via `SyncRequests`),
-    `StepRegistry` (the platforms' steps; also what may be queued: `SyncAdmission`),
-    `WorkflowEngine` + `SyncDispatcher` (run it), `PlatformBreakers` (behind
-    `PlatformHealth`), `SyncPause`, `SyncWakeUp`, `SyncLogService`, `GigImportService`,
-    `GigExportService`, `PlatformCheckService`, `CalendarReviewService`, `PlaceService`.
-- **adapter/in/** — `web/` Vaadin: `GigListView` (root route; the catalog grid with
-  add/edit/cancel/reactivate/re-sync/delete/publish/download and a "Platforms" column linking
-  each gig's platform page via `PlatformLinks` plus its live sync state), `SyncLogView`
-  (`/sync`), `PlatformCheckView` (`/check`), `ImportView`, `CalendarView`, `AddGigView`,
-  `GigForm`, `SyncBroadcaster`, `SyncLabels`, `UserErrors` (every view shows refusals and
-  failures the same way; unexpected ones are logged, not shown raw); `sync/` `SyncWorker`,
-  `PlatformCheckSchedule`; `rest/` `GigSummaryEndpoint`.
-- **adapter/out/** — `persistence/` (JPA entities + stores: `JpaGigRepository`,
-  `JpaPublishedGigStore`, `JpaSyncOutbox`, `JpaSettingsStore`, calendar stores,
-  `SpringTransactions`, `H2ScriptBackup`); `browser/` (`PlatformBrowser`); `calendar/`
-  (`IcsCalendarFeed` + `IcsParser`, `ProfileFile` rule format); `places/`
-  (`PhotonPlaceSearch`); `bandzone/` (`BandzonePlatform` traits; scrape provider +
-  importer; Selenium `SeleniumBandzonePortalClient` (login) + `SeleniumBandzoneSession` over
-  page objects `BandzoneBrowser`, `BandzoneForm` (shared fields: town, club, info),
-  `BandzoneCreateWizard`, `BandzoneUpdateForm`, `BandzoneDeleteTab`, `BandzoneLineupPage`;
-  steps `BandzoneFormCreate`/`BandzoneFormEdit`/`BandzoneCancel`/`BandzoneRemove`;
-  `StubBandzonePortalClient`); `bandsintown/` (`BandsintownPlatform` traits;
-  `BandsintownCsv` format; Selenium `SeleniumBitPortalClient` (login) + `SeleniumBitSession`
-  over page objects `BitPortal`, `BitEventsPage`, `BitBulkUpload`, `BitEventForm`,
-  `BitDeleteDialog`; the portal's replies typed once: `PortalReplies` (capture) →
-  `PortalReply`, `BitEvent`, `BitPlace`; `HumanPacer`, `Totp`, `RemovalReason`; steps
-  `BandsintownBulkCreate`/`BandsintownBulkEdit`/`BandsintownFormEdit`/`BandsintownCancel`/
-  `BandsintownRemove`/`BandsintownFormCancel`/`BandsintownFormRemove`;
-  `StubBitPortalClient`); `csv/` (`OpenCsvGigExporter`, the manual-import download).
-- **config/** — `UseCaseConfiguration` wires POJO services as `@Bean`s; `BandProfileSync`
-  loads the shipped + band calendar rules on start.
+Services are plain POJOs wired in their feature's `config` class; adapters are `@Component`s.
+`StepRegistry` collects every `SyncStep` bean by (platform, step type) — two beans for one slot =
+startup error — and `GigImportService`/`GigExportService` collect the importers/exporters the
+same way.
 
-Services are plain POJOs wired explicitly in `UseCaseConfiguration`; adapters are
-`@Component`s. `StepRegistry` collects every `SyncStep` bean by (platform, step type) — two
-beans for one slot = startup error — and `GigImportService`/`GigExportService` collect the
-importers/exporters the same way.
-
-**Catalog writes** (`CatalogWrites`): the add page, edits, the calendar and Import all write
+**Catalog writes** (`GigWrites`, implemented by `CatalogWrites`): the add page, edits, the calendar and Import all write
 gigs through it, so its rules hold for every writer — a gig never overwrites another (a new gig
 or an identity move onto an existing gig → `GigIdentityTakenException`); an edit applies only
 to the gig as the writer saw it (`ConcurrentChangeException`); a gig whose platform work is
 RUNNING is not changed, deleted, re-synced or unlinked (`GigBusyException`); an identity move
-takes the gig's platform records, queued work and calendar links along; an edit queues the
-update everywhere the gig is published.
+takes the gig's platform records and queued work along and tells the `GigMovedListener`s (the
+calendar's links follow); an edit queues the update everywhere the gig is published.
 
 ## Platform sync — outbox, eventually consistent
 
@@ -209,9 +190,9 @@ its own). Moot work (gig deleted/cancelled/published meanwhile) ends done with a
   when idle and on shutdown. Failures leave a screenshot,
   `$TMPDIR/bzscraper-<platform>-<step>.png`.
 - UI: actions return a `QueueResult` (shown as "Queued: …"); the catalog's Platforms
-  column and a summary line show queued/running/retrying/failed live (`SyncBroadcaster`
+  column and a summary line show queued/running/retrying/failed live (`WatchSyncUseCase`
   → server push); actions on a gig whose task is RUNNING are refused by the core
-  (`CatalogWrites`), the views only grey the buttons.
+  (`GigWrites`), the views only grey the buttons.
 - **Optimistic locking**: `UpdateGigUseCase.update(seen, updated)` — `seen` is the gig as the
   user opened it; if the catalog's gig is no longer that (changed in another window, by an
   import or the calendar, or deleted) nothing changes and `ConcurrentChangeException` says
@@ -281,7 +262,7 @@ first read is the baseline. The page shows the saved copy; "Read calendar" reads
 `SHOWTIME_LABEL` rule kind (the event's own start is the arrival; a show before 06:00 is the
 next day), venue/city/country from the map-style place (`Venue, Street, 811 05
 City-District, Country`). The user checks and saves → gig + `calendar_link` (event → GigId,
-moved by `GigCatalogService.update` on an identity change). Unlinked gig events are matched
+following the gig's identity moves through `GigMovedListener`). Unlinked gig events are matched
 to the catalog's gigs that day (link one, or bulk-link where there is exactly one).
 `CalendarCatalogMatcher` compares a LINKED upcoming gig with the calendar: another day,
 another show time, cancelled in the calendar, gone from the calendar (a multi-day event
@@ -401,7 +382,10 @@ bzscraper.bandsintown.pacing.min-ms / .max-ms             # human pauses between
 ## Database
 
 H2 file DB at `./data/bzscraper-gigs` (`bzscraper.db.path`). The schema is owned by
-**Flyway** (`adapters/persistence/src/main/resources/db/migration/V<n>__*.sql`); Hibernate runs with
+**Flyway** (`features/gig/src/main/resources/db/migration/V<n>__*.sql` — one schema history for
+all features, in the kernel — the history can't be split per feature, as V11 changes both the
+kernel's `published_gig` and the sync's `sync_task`, and an applied migration is never rewritten);
+Hibernate runs with
 `ddl-auto=validate`, so every entity change needs a new migration (tests run the
 migrations on an in-memory H2 and fail on a mismatch). A pre-Flyway database is
 baselined at V1. V3 re-keys venue-less gigs (and their publications) to the `@city` identity; V4 adds the band-calendar tables (`calendar_rule`, `calendar_decision`); V5 the sync outbox (`sync_task`, `sync_log`); V6 the saved calendar copy and event → gig links (`calendar_event`, `calendar_link`); V7 the band's slot (`gig.slot_start/slot_end`); V8 a workflow run's step (`sync_task.step`); V9 the gig's address (`gig.street/postal_code/district/region/latitude/longitude`); V10 the gig's optimistic-lock version (`gig.version`); V11 platform ids as text (`published_gig.platform` was an H2 enum — platforms come from adapters now); V12 the sync task's version and `app_setting`. H2's `AUTO_SERVER` (a second process on the same file) is opt-in: `bzscraper.db.options=;AUTO_SERVER=TRUE`. The H2 version is pinned in `pom.xml` (`h2.version`) because its file
@@ -420,16 +404,17 @@ every start to `./data/backups` (one per day, newest 14 kept); restore with
 ## Testing
 
 JUnit 5 + Mockito + AssertJ (`spring-boot-starter-test`). The domain has direct unit tests;
-service tests use `SyncFakes` (in-memory outbox/records/repository/settings, mutable clock,
-builders for the registry, engine, dispatcher, requests and catalog) and `TestPlatforms`
+service tests use `SyncFakes` (sync test-jar: in-memory outbox/records/repository/settings,
+mutable clock, builders for the registry, engine, dispatcher and requests) and `CatalogFakes`
+(catalog test-jar: the write path and catalog use cases) and `TestPlatforms`
 (two made-up platforms' traits — the core tests never need the real adapters). The fake
-outbox and `JpaSyncOutbox` both pass `SyncOutboxContract` (application test-jar), so the
+outbox and `JpaSyncOutbox` both pass `SyncOutboxContract` (sync test-jar), so the
 fake can't drift from the real one. `bzscraper.sync.worker.enabled=false` in Spring tests
 (tasks queue, never run). Persistence tests run the migrations on an in-memory H2
 (`JpaGigConcurrencyTest`: the optimistic lock across real transactions).
 
 **Page objects against copies of the platforms' pages** (headless Chromium from
-`TestChromium`, browser test-jar; skipped where Chromium + chromedriver are missing, paths
+`TestChromium`, browser test-jar; test-jars carry only these shared helpers; skipped where Chromium + chromedriver are missing, paths
 `-Dbzscraper.test.chromium` / `-Dbzscraper.test.chromedriver`, default `/usr/bin/…`;
 `PlatformBrowserTest` covers the browser lease itself): `BitPortalPagesTest` runs the Bandsintown
 pages against `PortalFixture` — an in-process HTTP server with copies of the portal's list

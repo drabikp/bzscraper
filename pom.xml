@@ -15,20 +15,21 @@
 	<name>bzscraper</name>
 	<description>Gig sync hub: one band's gig catalog, kept in sync with listing platforms.</description>
 
-	<!-- Hexagonal: the domain and the application (use cases + ports) know no framework; every
-	     adapter is its own module and depends only on the application; app wires them together. -->
+	<!-- Vertical slices: one module per feature (features/), each with its own domain, application
+	     (use cases + ports) and adapters; gig is the shared kernel. Platforms plug into the features'
+	     ports (platforms/); app wires everything and runs. -->
 	<modules>
-		<module>domain</module>
-		<module>application</module>
-		<module>adapters/persistence</module>
-		<module>adapters/browser</module>
-		<module>adapters/bandzone</module>
-		<module>adapters/bandsintown</module>
-		<module>adapters/calendar</module>
-		<module>adapters/places</module>
-		<module>adapters/web</module>
-		<module>adapters/rest</module>
-		<module>adapters/sync-worker</module>
+		<module>features/gig</module>
+		<module>features/ui</module>
+		<module>features/places</module>
+		<module>features/sync</module>
+		<module>features/catalog</module>
+		<module>features/importing</module>
+		<module>features/check</module>
+		<module>features/calendar</module>
+		<module>platforms/browser</module>
+		<module>platforms/bandzone</module>
+		<module>platforms/bandsintown</module>
 		<module>app</module>
 	</modules>
 
@@ -54,76 +55,87 @@
 			</dependency>
 			<dependency>
 				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-domain</artifactId>
+				<artifactId>bzscraper-gig</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-domain</artifactId>
+				<artifactId>bzscraper-gig</artifactId>
 				<version>${project.version}</version>
 				<type>test-jar</type>
 			</dependency>
 			<dependency>
 				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-application</artifactId>
+				<artifactId>bzscraper-ui</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-application</artifactId>
+				<artifactId>bzscraper-places</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>sk.drabik</groupId>
+				<artifactId>bzscraper-sync</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>sk.drabik</groupId>
+				<artifactId>bzscraper-sync</artifactId>
 				<version>${project.version}</version>
 				<type>test-jar</type>
 			</dependency>
 			<dependency>
 				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-adapter-persistence</artifactId>
+				<artifactId>bzscraper-catalog</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-adapter-browser</artifactId>
-				<version>${project.version}</version>
-			</dependency>
-			<dependency>
-				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-adapter-browser</artifactId>
+				<artifactId>bzscraper-catalog</artifactId>
 				<version>${project.version}</version>
 				<type>test-jar</type>
 			</dependency>
 			<dependency>
 				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-adapter-bandzone</artifactId>
+				<artifactId>bzscraper-importing</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-adapter-bandsintown</artifactId>
+				<artifactId>bzscraper-check</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-adapter-calendar</artifactId>
+				<artifactId>bzscraper-calendar</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-adapter-places</artifactId>
+				<artifactId>bzscraper-browser</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-adapter-web</artifactId>
+				<artifactId>bzscraper-browser</artifactId>
+				<version>${project.version}</version>
+				<type>test-jar</type>
+			</dependency>
+			<dependency>
+				<groupId>sk.drabik</groupId>
+				<artifactId>bzscraper-bandzone</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-adapter-rest</artifactId>
+				<artifactId>bzscraper-bandsintown</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
-				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-adapter-sync-worker</artifactId>
-				<version>${project.version}</version>
+				<groupId>com.tngtech.archunit</groupId>
+				<artifactId>archunit-junit5</artifactId>
+				<version>1.4.2</version>
 			</dependency>
 			<dependency>
 				<groupId>org.jsoup</groupId>

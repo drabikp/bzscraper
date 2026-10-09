@@ -5,6 +5,11 @@ rule from the owner: **domain and application are platform-agnostic** — no Ban
 Bandsintown names, branches, formats or traits in them; everything a platform is or can do
 comes from its adapter. Done in phases, the build green after each.
 
+> The paths and package names below are those of the layered modules this plan was carried out
+> in (`domain/`, `application/`, `adapters/*`). The code has since been reorganized into vertical
+> slices (`features/*`, `platforms/*` — see CLAUDE.md, **Structure**); the rules this plan set up
+> are now checked by `ArchitectureTest` and `PlatformNamesTest`.
+
 ## Phase 1 — a platform-agnostic core (review 6, 7; the rule)
 
 **Problem.** `Platform` is an enum of the two platforms, and the core branches on it:
@@ -36,7 +41,8 @@ case are platform features inside the core.
   Bandsintown adapter's exporter; the catalog offers "Download for <platform>" per exporter.
 - Test fixtures name platforms only in tests (`TestPlatforms`).
 
-**Check.** `grep -ri 'bandzone\|bandsintown' domain/src/main application/src/main` is empty.
+**Check.** `grep -ri 'bandzone\|bandsintown' domain/src/main application/src/main` is empty (now:
+`PlatformNamesTest` over `features/*/src/main`).
 
 ## Phase 2 — data integrity (review 1, 2, 3)
 

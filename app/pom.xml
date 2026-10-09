@@ -14,39 +14,39 @@
 	<dependencies>
 		<dependency>
 			<groupId>sk.drabik</groupId>
-			<artifactId>bzscraper-application</artifactId>
+			<artifactId>bzscraper-gig</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>sk.drabik</groupId>
-			<artifactId>bzscraper-adapter-persistence</artifactId>
+			<artifactId>bzscraper-places</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>sk.drabik</groupId>
-			<artifactId>bzscraper-adapter-bandzone</artifactId>
+			<artifactId>bzscraper-sync</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>sk.drabik</groupId>
-			<artifactId>bzscraper-adapter-bandsintown</artifactId>
+			<artifactId>bzscraper-catalog</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>sk.drabik</groupId>
-			<artifactId>bzscraper-adapter-calendar</artifactId>
+			<artifactId>bzscraper-importing</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>sk.drabik</groupId>
-			<artifactId>bzscraper-adapter-places</artifactId>
+			<artifactId>bzscraper-check</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>sk.drabik</groupId>
-			<artifactId>bzscraper-adapter-web</artifactId>
+			<artifactId>bzscraper-calendar</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>sk.drabik</groupId>
-			<artifactId>bzscraper-adapter-rest</artifactId>
+			<artifactId>bzscraper-bandzone</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>sk.drabik</groupId>
-			<artifactId>bzscraper-adapter-sync-worker</artifactId>
+			<artifactId>bzscraper-bandsintown</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -64,8 +64,14 @@
 		</dependency>
 		<dependency>
 			<groupId>sk.drabik</groupId>
-			<artifactId>bzscraper-domain</artifactId>
+			<artifactId>bzscraper-gig</artifactId>
 			<type>test-jar</type>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<!-- ArchitectureTest: the slices' rules, checked on the compiled classes -->
+			<groupId>com.tngtech.archunit</groupId>
+			<artifactId>archunit-junit5</artifactId>
 			<scope>test</scope>
 		</dependency>
 		<dependency>

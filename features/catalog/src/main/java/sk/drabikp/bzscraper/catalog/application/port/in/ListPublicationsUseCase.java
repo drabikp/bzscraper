@@ -1,0 +1,14 @@
+package sk.drabikp.bzscraper.catalog.application.port.in;
+
+import sk.drabikp.bzscraper.gig.domain.GigId;
+import sk.drabikp.bzscraper.gig.domain.platform.Platform;
+import sk.drabikp.bzscraper.gig.domain.platform.Publication;
+
+import java.util.Map;
+
+/** Where each catalog gig is published: per gig, its copy on each platform. */
+public interface ListPublicationsUseCase {
+
+    /** Gigs never published anywhere are absent. */
+    Map<GigId, Map<Platform, Publication>> publicationsByGig();
+}
