@@ -15,8 +15,8 @@ import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.sli
 
 /**
  * The structure's rules (see CLAUDE.md): vertical slices — one module per feature, each with
- * domain / application / adapters — over the shared kernel {@code gig} and the pages' shared
- * {@code ui}; platforms plug in from outside. Maven already forbids a module using one it doesn't
+ * domain / application / adapters (its REST API among them) — over the shared kernel {@code gig};
+ * platforms plug in from outside; live updates and the app's web setup are modules of their own. Maven already forbids a module using one it doesn't
  * depend on; these rules keep each module's inside in shape and its outside narrow.
  */
 @AnalyzeClasses(packages = "sk.drabikp.bzscraper", importOptions = ImportOption.DoNotIncludeTests.class)
@@ -50,7 +50,7 @@ class ArchitectureTest {
             .that().resideInAPackage(BASE + "..application..")
             .should().dependOnClassesThat().resideInAnyPackage("org.springframework..", "jakarta..", "com.vaadin..",
                     "org.openqa..", "org.hibernate..", "org.slf4j..", BASE + "..adapter..", BASE + "..config..",
-                    ROOT + "ui..");
+                    ROOT + "live..", ROOT + "web..");
 
     /**
      * Another module sees of a feature only what it offers: its domain and its ports (use cases
@@ -59,19 +59,9 @@ class ArchitectureTest {
     @ArchTest
     static final ArchRule a_feature_is_used_only_through_its_domain_and_ports = all(FEATURES.stream()
             .map(f -> classes().that().resideInAPackage(ROOT + f + "..")
-                    .and().resideOutsideOfPackages(ROOT + f + ".domain..", ROOT + f + ".application.port..",
-                            ROOT + f + ".adapter.in.web.form..")
+                    .and().resideOutsideOfPackages(ROOT + f + ".domain..", ROOT + f + ".application.port..")
                     .should().onlyHaveDependentClassesThat().resideInAPackage(ROOT + f + "..")
-                    .as("the inside of " + f + " (not its domain, ports or forms) is used only by " + f))
-            .toList());
-
-    /** A feature's form (e.g. the gig form) may be embedded in another feature's pages — and nowhere else. */
-    @ArchTest
-    static final ArchRule a_features_forms_are_used_only_by_pages = all(FEATURES.stream()
-            .map(f -> classes().that().resideInAPackage(ROOT + f + ".adapter.in.web.form..")
-                    .should().onlyHaveDependentClassesThat().resideInAnyPackage(ROOT + f + "..",
-                            BASE + "..adapter.in.web..")
-                    .allowEmptyShould(true))
+                    .as("the inside of " + f + " (not its domain or ports) is used only by " + f))
             .toList());
 
     @ArchTest
@@ -80,16 +70,30 @@ class ArchitectureTest {
             .should().onlyHaveDependentClassesThat().resideInAPackage(ROOT + "gig..");
 
     @ArchTest
-    static final ArchRule the_kernel_knows_no_feature_and_no_page = noClasses()
+    static final ArchRule the_kernel_knows_no_feature = noClasses()
             .that().resideInAPackage(ROOT + "gig..")
             .should().dependOnClassesThat().resideInAnyPackage(packages(Stream.concat(FEATURES.stream(),
-                    Stream.of("ui", "browser", "bandzone", "bandsintown"))));
+                    Stream.of("live", "web", "browser", "bandzone", "bandsintown"))));
+
+    /**
+     * Live updates are server-sent events only inside the live module: everyone else tells the
+     * {@code LiveUpdates} port, and the live module knows nothing but that port.
+     */
+    @ArchTest
+    static final ArchRule live_updates_are_used_only_through_their_port = noClasses()
+            .that().resideOutsideOfPackage(ROOT + "live..")
+            .should().dependOnClassesThat().resideInAPackage(ROOT + "live..");
 
     @ArchTest
-    static final ArchRule the_pages_kit_knows_no_feature = noClasses()
-            .that().resideInAPackage(ROOT + "ui..")
+    static final ArchRule the_live_module_knows_only_the_kernel = noClasses()
+            .that().resideInAPackage(ROOT + "live..")
             .should().dependOnClassesThat().resideInAnyPackage(packages(Stream.concat(FEATURES.stream(),
-                    Stream.of("browser", "bandzone", "bandsintown"))));
+                    Stream.of("web", "browser", "bandzone", "bandsintown"))));
+
+    @ArchTest
+    static final ArchRule nothing_uses_the_apps_web_setup = noClasses()
+            .that().resideOutsideOfPackage(ROOT + "web..")
+            .should().dependOnClassesThat().resideInAPackage(ROOT + "web..");
 
     @ArchTest
     static final ArchRule the_features_know_no_platform = noClasses()

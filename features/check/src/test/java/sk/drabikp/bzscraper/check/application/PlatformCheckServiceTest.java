@@ -3,6 +3,7 @@ package sk.drabikp.bzscraper.check.application;
 import org.junit.jupiter.api.Test;
 import sk.drabikp.bzscraper.check.domain.Drift;
 import sk.drabikp.bzscraper.check.domain.PlatformCheck;
+import sk.drabikp.bzscraper.gig.application.port.out.LiveUpdates;
 import sk.drabikp.bzscraper.gig.domain.Gig;
 import sk.drabikp.bzscraper.gig.domain.TestGigs;
 import sk.drabikp.bzscraper.gig.domain.platform.Platform;
@@ -57,7 +58,7 @@ class PlatformCheckServiceTest {
 
     private PlatformCheckService service(GigImporter... importers) {
         return new PlatformCheckService(List.of(importers), gigs, published, SyncFakes.state(outbox, breakers),
-                new SyncFakes.DirectTransactions(), TestPlatforms.PLATFORMS, clock, 3650);
+                new SyncFakes.DirectTransactions(), TestPlatforms.PLATFORMS, clock, 3650, LiveUpdates.NONE);
     }
 
     @Test
@@ -113,7 +114,7 @@ class PlatformCheckServiceTest {
         PlatformCheckService lastWeekOnly = new PlatformCheckService(
                 List.of(importer(BANDZONE, () -> List.of(new ImportedGig(BANDZONE, renamedThere, "563380")))),
                 gigs, published, SyncFakes.state(outbox, breakers), new SyncFakes.DirectTransactions(),
-                TestPlatforms.PLATFORMS, clock, 7);
+                TestPlatforms.PLATFORMS, clock, 7, LiveUpdates.NONE);
 
         assertThat(lastWeekOnly.check().orElseThrow().drifts()).isEmpty();
     }

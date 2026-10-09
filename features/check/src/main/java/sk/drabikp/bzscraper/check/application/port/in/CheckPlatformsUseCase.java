@@ -1,7 +1,6 @@
 package sk.drabikp.bzscraper.check.application.port.in;
 
 import sk.drabikp.bzscraper.check.domain.PlatformCheck;
-import sk.drabikp.bzscraper.gig.application.ChangeListeners.Subscription;
 import sk.drabikp.bzscraper.gig.domain.GigId;
 import sk.drabikp.bzscraper.gig.domain.platform.Platform;
 
@@ -23,8 +22,6 @@ public interface CheckPlatformsUseCase {
 
     boolean running();
 
-    /** Lets a page follow the check: {@code onChange} runs when one starts or ends, or the result changed. */
-    Subscription watch(Runnable onChange);
 
     /** Forgets that the gig is on the platform — its event is gone there; Publish creates it again. */
     void forget(Platform platform, GigId gigId);

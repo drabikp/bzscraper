@@ -64,7 +64,7 @@ class ReconcilerTest {
                 .anySatisfy(d -> assertThat(d.toString()).startsWith("name: catalog"))
                 .anySatisfy(d -> assertThat(d.toString()).isEqualTo("town: catalog Košice, Bandsintown Bratislava"));
         assertThat(check(BANDSINTOWN, SNP, laterSameDay)).singleElement().extracting(Drift::differences).asList()
-                .containsExactly("time: catalog 21:00, Bandsintown 22:30");
+                .map(Object::toString).containsExactly("time: catalog 21:00, Bandsintown 22:30");
     }
 
     @Test
@@ -107,7 +107,7 @@ class ReconcilerTest {
         assertThat(check(BANDZONE, SNP, null)).singleElement().extracting(Drift::kind).isEqualTo(Drift.Kind.MISSING);
         assertThat(check(BANDSINTOWN, SNP.cancel(), null)).as("cancelling removes it there").isEmpty();
         assertThat(check(BANDZONE, SNP.cancel(), SNP)).singleElement().extracting(Drift::differences).asList()
-                .containsExactly("cancelled in the catalog, not on Bandzone");
+                .map(Object::toString).containsExactly("cancelled in the catalog, not on Bandzone");
     }
 
     @Test

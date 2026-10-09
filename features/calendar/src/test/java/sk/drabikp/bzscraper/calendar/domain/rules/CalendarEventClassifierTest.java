@@ -15,6 +15,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static sk.drabikp.bzscraper.calendar.domain.event.CalendarEventKind.GIG;
 import static sk.drabikp.bzscraper.calendar.domain.event.CalendarEventKind.NOT_GIG;
 import static sk.drabikp.bzscraper.calendar.domain.event.CalendarEventKind.UNSURE;
@@ -80,8 +81,8 @@ class CalendarEventClassifierTest {
         assertThat(c.kind()).isEqualTo(GIG);
         assertThat(c.decidedByUser()).isFalse();
         assertThat(c.score()).isEqualTo(8);
-        assertThat(c.reasons()).containsExactly(
-                new Reason("notes have \"showtime:\"", 5), new Reason("title contains \"fest\"", 3));
+        assertThat(c.reasons()).extracting(Reason::text, Reason::weight).containsExactly(
+                tuple("notes have \"showtime:\"", 5), tuple("title contains \"fest\"", 3));
     }
 
     @Test
@@ -94,8 +95,8 @@ class CalendarEventClassifierTest {
     void case_accents_and_leading_punctuation_do_not_matter() {
         assertThat(one(event("SKÚŠKA (full)")).kind()).isEqualTo(NOT_GIG);
         assertThat(one(event("- skuska")).kind()).isEqualTo(NOT_GIG);
-        assertThat(one(event("Gig", "ČAS PREDBEŽNE: 20:00")).reasons())
-                .contains(new Reason("notes have \"cas predbezne:\"", 5));
+        assertThat(one(event("Gig", "ČAS PREDBEŽNE: 20:00")).reasons()).extracting(Reason::text, Reason::weight)
+                .contains(tuple("notes have \"cas predbezne:\"", 5));
     }
 
     @Test
@@ -135,7 +136,7 @@ class CalendarEventClassifierTest {
 
         List<CalendarClassification> results = classify(RULES, Set.of(EVENING.toLocalDate()), Map.of(), club, travel);
 
-        assertThat(results.get(0).reasons()).containsExactly(new Reason("the catalog has a gig that day", 2));
+        assertThat(results.get(0).reasons()).extracting(Reason::text, Reason::weight).containsExactly(tuple("the catalog has a gig that day", 2));
         assertThat(results.get(0).kind()).isEqualTo(UNSURE);
         assertThat(results.get(1).kind()).isEqualTo(NOT_GIG);
         assertThat(results.get(1).reasons()).extracting(Reason::text).doesNotContain("the catalog has a gig that day");
@@ -149,10 +150,10 @@ class CalendarEventClassifierTest {
                 EVENING.minusHours(7));
         CalendarEvent club = event("Snaefell", "", "Zámecký klub, Hranice", EVENING, EVENING.plusHours(2));
 
-        assertThat(classify(RULES, Set.of(), Map.of(), arriving, show).get(1).reasons())
-                .containsExactly(new Reason("travel \"cesta Zlín\" leads to it", 3));
-        assertThat(classify(RULES, Set.of(), Map.of(), samePlace, club).get(1).reasons())
-                .containsExactly(new Reason("travel \"cesta Klub\" leads to it", 3));
+        assertThat(classify(RULES, Set.of(), Map.of(), arriving, show).get(1).reasons()).extracting(Reason::text, Reason::weight)
+                .containsExactly(tuple("travel \"cesta Zlín\" leads to it", 3));
+        assertThat(classify(RULES, Set.of(), Map.of(), samePlace, club).get(1).reasons()).extracting(Reason::text, Reason::weight)
+                .containsExactly(tuple("travel \"cesta Klub\" leads to it", 3));
     }
 
     @Test
@@ -166,13 +167,13 @@ class CalendarEventClassifierTest {
     void repeating_long_and_much_used_titles_count_against() {
         CalendarEvent weekly = new CalendarEvent("call", "Call", "", "", EVENING, EVENING.plusHours(1), false, true,
                 false, CalendarEventStatus.CONFIRMED, null);
-        assertThat(one(weekly).reasons()).containsExactly(new Reason("repeating event", -10));
-        assertThat(one(allDay("Sri Lanka", LocalDate.of(2021, 9, 8), 13)).reasons())
-                .containsExactly(new Reason("13 days long", -3), new Reason("all-day, time shown as free", -1));
+        assertThat(one(weekly).reasons()).extracting(Reason::text, Reason::weight).containsExactly(tuple("repeating event", -10));
+        assertThat(one(allDay("Sri Lanka", LocalDate.of(2021, 9, 8), 13)).reasons()).extracting(Reason::text, Reason::weight)
+                .containsExactly(tuple("13 days long", -3), tuple("all-day, time shown as free", -1));
 
         CalendarEvent[] meetings = {event("Porada"), event("porada"), event("PORADA"), event("Porada")};
-        assertThat(classify(RULES, Set.of(), Map.of(), meetings).getFirst().reasons())
-                .containsExactly(new Reason("title used 4 times", -3));
+        assertThat(classify(RULES, Set.of(), Map.of(), meetings).getFirst().reasons()).extracting(Reason::text, Reason::weight)
+                .containsExactly(tuple("title used 4 times", -3));
     }
 
     @Test

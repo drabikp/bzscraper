@@ -15,7 +15,16 @@ public record CatalogMatch(State state, Gig gig, List<Gig> sameDay, List<Differe
     public enum State { LINKED, SAME_DAY, MISSING }
 
     /** What the calendar says differently about a linked gig, as an action the user can take. */
-    public record Difference(Kind kind, String text) {
+    /**
+     * What differs, in English ({@code text}), and the two values compared — ISO dates or times,
+     * {@code catalog} null when the catalog has none (the band's slot of a multi-day event) — so
+     * a page can say it in the user's language.
+     */
+    public record Difference(Kind kind, String text, String calendar, String catalog) {
+
+        public Difference(Kind kind, String text) {
+            this(kind, text, null, null);
+        }
     }
 
     public enum Kind {

@@ -4,6 +4,7 @@ import sk.drabikp.bzscraper.calendar.domain.event.CalendarEvent;
 import sk.drabikp.bzscraper.calendar.domain.event.CalendarEventKind;
 import sk.drabikp.bzscraper.calendar.domain.event.CalendarEventStatus;
 import sk.drabikp.bzscraper.calendar.domain.rules.CalendarClassification.Reason;
+import sk.drabikp.bzscraper.calendar.domain.rules.CalendarClassification.Why;
 import sk.drabikp.bzscraper.gig.domain.TextFold;
 
 import java.time.Duration;
@@ -61,13 +62,13 @@ public final class CalendarEventClassifier {
         List<Reason> reasons = new ArrayList<>();
         for (ProfileRule rule : profile.rules()) {
             if (rule.enabled() && rule.kind().weighted() && rule.kind() != RuleKind.CATALOG_GIG_SAME_DAY) {
-                match(rule, event, context).ifPresent(text -> reasons.add(new Reason(text, rule.weight())));
+                match(rule, event, context).ifPresent(reasons::add);
             }
         }
         boolean strongAgainst = reasons.stream().anyMatch(r -> r.weight() <= thresholds.strongNegative());
         if (!strongAgainst && context.catalogDays().contains(event.day())) {
             profile.enabled(RuleKind.CATALOG_GIG_SAME_DAY).stream().findFirst()
-                    .ifPresent(rule -> reasons.add(new Reason("the catalog has a gig that day", rule.weight())));
+                    .ifPresent(rule -> reasons.add(Reason.of(Why.CATALOG_GIG_SAME_DAY, rule.weight())));
         }
         int score = reasons.stream().mapToInt(Reason::weight).sum();
         boolean anyFor = reasons.stream().anyMatch(r -> r.weight() > 0);
@@ -87,27 +88,30 @@ public final class CalendarEventClassifier {
                 reasons);
     }
 
-    private static Optional<String> match(ProfileRule rule, CalendarEvent event, Context context) {
+    private static Optional<Reason> match(ProfileRule rule, CalendarEvent event, Context context) {
+        int weight = rule.weight();
         return switch (rule.kind()) {
-            case TITLE_STARTS_WITH -> startsWith(rule, event.title()).map(w -> "title starts with \"" + w + "\"");
-            case MEMBER -> startsWith(rule, event.title()).map(w -> "title starts with a member's name \"" + w + "\"");
-            case TITLE_CONTAINS -> contains(rule, event.title()).map(w -> "title contains \"" + w + "\"");
-            case NOTES_CONTAIN -> contains(rule, event.notes()).map(w -> "notes contain \"" + w + "\"");
+            case TITLE_STARTS_WITH -> startsWith(rule, event.title()).map(w -> new Reason(Why.TITLE_STARTS_WITH, w, weight));
+            case MEMBER -> startsWith(rule, event.title()).map(w -> new Reason(Why.MEMBER, w, weight));
+            case TITLE_CONTAINS -> contains(rule, event.title()).map(w -> new Reason(Why.TITLE_CONTAINS, w, weight));
+            case NOTES_CONTAIN -> contains(rule, event.notes()).map(w -> new Reason(Why.NOTES_CONTAIN, w, weight));
             case NOTES_LABEL -> rule.alternatives().stream()
                     .filter(label -> labelPattern(label).matcher(TextFold.fold(event.notes())).find())
-                    .findFirst().map(label -> "notes have \"" + label + ":\"");
-            case REPEATING -> event.repeating() ? Optional.of("repeating event") : Optional.empty();
+                    .findFirst().map(label -> new Reason(Why.NOTES_LABEL, label, weight));
+            case REPEATING -> event.repeating() ? Optional.of(Reason.of(Why.REPEATING, weight)) : Optional.empty();
             case LONGER_THAN_DAYS -> {
                 long days = Duration.between(event.start(), event.end()).toDays();
-                yield days > rule.number() ? Optional.of(days + " days long") : Optional.empty();
+                yield days > rule.number() ? Optional.of(new Reason(Why.DAYS_LONG, String.valueOf(days), weight))
+                        : Optional.empty();
             }
             case ALL_DAY_FREE -> event.allDay() && event.shownAsFree()
-                    ? Optional.of("all-day, time shown as free") : Optional.empty();
+                    ? Optional.of(Reason.of(Why.ALL_DAY_FREE, weight)) : Optional.empty();
             case TITLE_REPEATED -> {
                 long uses = context.titleCounts().getOrDefault(TextFold.fold(event.title()), 0L);
-                yield uses >= rule.number() ? Optional.of("title used " + uses + " times") : Optional.empty();
+                yield uses >= rule.number() ? Optional.of(new Reason(Why.TITLE_REPEATED, String.valueOf(uses), weight))
+                        : Optional.empty();
             }
-            case TRAVEL_LEADS_TO -> travelTo(event, context).map(t -> "travel \"" + t.title() + "\" leads to it");
+            case TRAVEL_LEADS_TO -> travelTo(event, context).map(t -> new Reason(Why.TRAVEL_LEADS_TO, t.title(), weight));
             default -> Optional.empty();
         };
     }
@@ -131,41 +135,41 @@ public final class CalendarEventClassifier {
 
     private static CalendarEventStatus status(CalendarEvent event, BandProfile profile, List<Reason> reasons) {
         if (event.calendarStatus() == CalendarEventStatus.CANCELLED) {
-            reasons.add(new Reason("cancelled in the calendar", 0));
+            reasons.add(Reason.of(Why.CANCELLED_IN_CALENDAR, 0));
             return CalendarEventStatus.CANCELLED;
         }
-        Optional<String> cancelled = firstMatch(profile.enabled(RuleKind.CANCELLED_TITLE),
-                rule -> prefix(rule, event.title()).map(w -> "cancelled: title starts with \"" + w + "\""))
+        Optional<Reason> cancelled = firstMatch(profile.enabled(RuleKind.CANCELLED_TITLE),
+                rule -> prefix(rule, event.title()).map(w -> new Reason(Why.CANCELLED_TITLE, w, 0)))
                 .or(() -> firstMatch(profile.enabled(RuleKind.CANCELLED_NOTES),
-                        rule -> contains(rule, event.notes()).map(w -> "cancelled: notes contain \"" + w + "\"")));
+                        rule -> contains(rule, event.notes()).map(w -> new Reason(Why.CANCELLED_NOTES, w, 0))));
         if (cancelled.isPresent()) {
-            reasons.add(new Reason(cancelled.get(), 0));
+            reasons.add(cancelled.get());
             return CalendarEventStatus.CANCELLED;
         }
-        Optional<String> tentative = event.calendarStatus() == CalendarEventStatus.TENTATIVE
-                ? Optional.of("tentative in the calendar")
+        Optional<Reason> tentative = event.calendarStatus() == CalendarEventStatus.TENTATIVE
+                ? Optional.of(Reason.of(Why.TENTATIVE_IN_CALENDAR, 0))
                 : firstMatch(profile.enabled(RuleKind.TENTATIVE_TITLE),
-                        rule -> prefix(rule, event.title()).map(w -> "tentative: title starts with \"" + w + "\""))
+                        rule -> prefix(rule, event.title()).map(w -> new Reason(Why.TENTATIVE_TITLE, w, 0)))
                 .or(() -> firstMatch(profile.enabled(RuleKind.TENTATIVE_NOTES),
-                        rule -> contains(rule, event.notes()).map(w -> "tentative: notes contain \"" + w + "\"")))
+                        rule -> contains(rule, event.notes()).map(w -> new Reason(Why.TENTATIVE_NOTES, w, 0))))
                 .or(() -> firstMatch(profile.enabled(RuleKind.CONFIRMED_FIELD), rule -> unconfirmedField(rule, event)));
         if (tentative.isPresent()) {
-            reasons.add(new Reason(tentative.get(), 0));
+            reasons.add(tentative.get());
             return CalendarEventStatus.TENTATIVE;
         }
         return CalendarEventStatus.CONFIRMED;
     }
 
-    private static Optional<String> unconfirmedField(ProfileRule rule, CalendarEvent event) {
+    private static Optional<Reason> unconfirmedField(ProfileRule rule, CalendarEvent event) {
         Matcher field = Pattern.compile("(?<![\\p{L}\\p{N}])" + spaced(rule.fieldLabel()) + "\\s*:[ \\t]*(\\S+)")
                 .matcher(TextFold.fold(event.notes()));
         if (field.find() && !field.group(1).startsWith(rule.fieldPrefix())) {
-            return Optional.of("tentative: \"" + rule.fieldLabel() + ":\" says \"" + field.group(1) + "\"");
+            return Optional.of(new Reason(Why.TENTATIVE_FIELD, rule.fieldLabel() + ": " + field.group(1), 0));
         }
         return Optional.empty();
     }
 
-    private static Optional<String> firstMatch(List<ProfileRule> rules, Function<ProfileRule, Optional<String>> test) {
+    private static Optional<Reason> firstMatch(List<ProfileRule> rules, Function<ProfileRule, Optional<Reason>> test) {
         return rules.stream().map(test).flatMap(Optional::stream).findFirst();
     }
 

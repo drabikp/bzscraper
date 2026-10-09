@@ -33,7 +33,7 @@ class SpringTransactions implements Transactions {
         try {
             return template.execute(status -> work.get());
         } catch (OptimisticLockingFailureException e) {
-            throw new ConcurrentChangeException("It was changed by someone else at the same time — nothing was "
+            throw new ConcurrentChangeException(ConcurrentChangeException.CHANGED, "It was changed by someone else at the same time — nothing was "
                     + "changed. Reload and try again.", e);
         }
     }

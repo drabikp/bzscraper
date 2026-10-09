@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.time.LocalDate;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class GigIdTest {
 
@@ -16,5 +17,14 @@ class GigIdTest {
         assertThat(id.key()).isEqualTo("2026-10-01|klub | 007");
         assertThat(GigId.fromKey(id.key())).isEqualTo(id);
         assertThat(GigId.fromKey(byCity.key())).isEqualTo(byCity);
+    }
+
+    @Test
+    void the_token_is_url_safe_and_stands_for_the_same_identity() {
+        GigId id = new GigId(LocalDate.of(2026, 10, 1), "klub 007 / žilina?");
+
+        assertThat(id.token()).matches("[A-Za-z0-9_-]+");
+        assertThat(GigId.fromToken(id.token())).isEqualTo(id);
+        assertThatThrownBy(() -> GigId.fromToken("not-a-gig")).isInstanceOf(IllegalArgumentException.class);
     }
 }

@@ -3,6 +3,8 @@ package sk.drabikp.bzscraper.catalog.application.port.in;
 import sk.drabikp.bzscraper.gig.application.UserFacingException;
 import sk.drabikp.bzscraper.gig.domain.Gig;
 
+import java.util.Map;
+
 /**
  * Another catalog gig already has this identity (the same day and venue): saving would
  * overwrite it and its platform links, so nothing was changed.
@@ -10,7 +12,8 @@ import sk.drabikp.bzscraper.gig.domain.Gig;
 public class GigIdentityTakenException extends UserFacingException {
 
     public GigIdentityTakenException(Gig gig) {
-        super("The catalog already has a gig on " + gig.schedule().startDate() + " at "
+        super("gigIdentityTaken", Map.of("date", gig.schedule().startDate().toString(), "venue",
+                gig.location().displayVenue()), "The catalog already has a gig on " + gig.schedule().startDate() + " at "
                 + gig.location().displayVenue() + " — edit that one instead.");
     }
 }

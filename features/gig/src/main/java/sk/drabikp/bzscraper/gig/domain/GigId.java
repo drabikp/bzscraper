@@ -1,6 +1,8 @@
 package sk.drabikp.bzscraper.gig.domain;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.util.Base64;
 
 /**
  * Identity of a {@link Gig} — its natural business key: start date + normalized
@@ -28,6 +30,29 @@ public record GigId(LocalDate date, String venue) {
     public static GigId fromKey(String key) {
         int separator = key.indexOf('|');
         return new GigId(LocalDate.parse(key.substring(0, separator)), key.substring(separator + 1));
+    }
+
+    /** The identity as a URL-safe token, for addresses that name a gig ({@code /api/gigs/<token>}). */
+    public String token() {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(key().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** The identity a {@link #token()} stands for; IllegalArgumentException when it stands for none. */
+    public static GigId fromToken(String token) {
+        String key;
+        try {
+            key = new String(Base64.getUrlDecoder().decode(token), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("not a gig: " + token, e);
+        }
+        if (key.indexOf('|') < 0) {
+            throw new IllegalArgumentException("not a gig: " + token);
+        }
+        try {
+            return fromKey(key);
+        } catch (java.time.DateTimeException e) {
+            throw new IllegalArgumentException("not a gig: " + token, e);
+        }
     }
 
     static String normalizeVenue(String venue) {

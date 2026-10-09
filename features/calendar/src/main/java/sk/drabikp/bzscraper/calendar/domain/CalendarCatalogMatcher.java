@@ -67,17 +67,20 @@ public final class CalendarCatalogMatcher {
                 : schedule.multiDay() ? !schedule.covers(draft.date()) : !draft.date().equals(schedule.startDate());
         if (dayMoved) {
             differences.add(new Difference(Kind.DATE, "calendar: " + DAY.format(draft.date()) + ", catalog: "
-                    + DAY.format(showDay) + (schedule.hasSlot() ? " (the band's slot)" : "")));
+                    + DAY.format(showDay) + (schedule.hasSlot() ? " (the band's slot)" : ""),
+                    draft.date().toString(), showDay.toString()));
         }
         if (draft.showTime() != null) {
             if (!schedule.hasSlot() && schedule.multiDay()) {
                 differences.add(new Difference(Kind.SHOW_TIME, "the calendar gives the band's slot: "
-                        + DAY.format(draft.date()) + " " + draft.showTime() + "; the catalog has only the whole event"));
+                        + DAY.format(draft.date()) + " " + draft.showTime() + "; the catalog has only the whole event",
+                        draft.date() + "T" + draft.showTime(), null));
             } else {
                 LocalTime gigTime = schedule.showStart().toLocalTime();
                 if (!draft.showTime().equals(gigTime)) {
                     differences.add(new Difference(Kind.SHOW_TIME,
-                            "show time in the calendar: " + draft.showTime() + ", catalog: " + gigTime));
+                            "show time in the calendar: " + draft.showTime() + ", catalog: " + gigTime,
+                            draft.showTime().toString(), gigTime.toString()));
                 }
             }
         }

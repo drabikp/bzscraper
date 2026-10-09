@@ -33,19 +33,10 @@ build/
 ### VS Code ###
 .vscode/
 
-### Vaadin (auto-generated frontend assets) ###
-**/src/main/frontend/generated/
-**/src/main/frontend/index.html
-**/src/main/bundles/
-package.json
-package-lock.json
-pnpmfile.js
-pnpm-lock.yaml
-tsconfig.json
-types.d.ts
-vite.config.ts
-vite.generated.ts
-.hotswap-agent.properties
+### Frontend (web/frontend) ###
+web/frontend/node/
+web/frontend/dist/
+*.tsbuildinfo
 
 ### OS ###
 .DS_Store
@@ -64,3 +55,6 @@ data/
 
 # private iCal address of the band calendar (never commit)
 /calendar
+
+# the app's sign-in password for the local run (never commit)
+.app-login

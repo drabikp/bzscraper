@@ -5,9 +5,8 @@ import sk.drabikp.bzscraper.check.application.port.in.CheckPlatformsUseCase;
 import sk.drabikp.bzscraper.check.domain.Drift;
 import sk.drabikp.bzscraper.check.domain.PlatformCheck;
 import sk.drabikp.bzscraper.check.domain.Reconciler;
-import sk.drabikp.bzscraper.gig.application.ChangeListeners.Subscription;
-import sk.drabikp.bzscraper.gig.application.ChangeListeners;
 import sk.drabikp.bzscraper.gig.application.port.out.GigRepository;
+import sk.drabikp.bzscraper.gig.application.port.out.LiveUpdates;
 import sk.drabikp.bzscraper.gig.application.port.out.PublishedGigStore;
 import sk.drabikp.bzscraper.gig.application.port.out.Transactions;
 import sk.drabikp.bzscraper.gig.domain.Gig;
@@ -47,14 +46,14 @@ public class PlatformCheckService implements CheckPlatformsUseCase {
     private final Transactions transactions;
     private final Platforms platforms;
     private final Clock clock;
-    private final ChangeListeners listeners = new ChangeListeners();
+    private final LiveUpdates live;
     private final int pastDays;
     private final AtomicBoolean running = new AtomicBoolean();
     private volatile PlatformCheck last;
 
     public PlatformCheckService(List<GigImporter> importers, GigRepository gigRepository,
                                 PublishedGigStore publishedGigStore, SyncStateUseCase sync, Transactions transactions,
-                                Platforms platforms, Clock clock, int pastDays) {
+                                Platforms platforms, Clock clock, int pastDays, LiveUpdates live) {
         this.importers = importers;
         this.gigRepository = gigRepository;
         this.publishedGigStore = publishedGigStore;
@@ -62,6 +61,7 @@ public class PlatformCheckService implements CheckPlatformsUseCase {
         this.transactions = transactions;
         this.platforms = platforms;
         this.clock = clock;
+        this.live = live;
         this.pastDays = pastDays;
     }
 
@@ -70,7 +70,7 @@ public class PlatformCheckService implements CheckPlatformsUseCase {
         if (!running.compareAndSet(false, true)) {
             return Optional.empty();
         }
-        listeners.changed();
+        live.changed(LiveUpdates.Topic.CHECK);
         try {
             List<Drift> drifts = new ArrayList<>();
             Map<Platform, String> unreadable = new TreeMap<>();
@@ -105,13 +105,8 @@ public class PlatformCheckService implements CheckPlatformsUseCase {
             return Optional.of(last);
         } finally {
             running.set(false);
-            listeners.changed();
+            live.changed(LiveUpdates.Topic.CHECK);
         }
-    }
-
-    @Override
-    public Subscription watch(Runnable onChange) {
-        return listeners.add(onChange);
     }
 
     @Override
@@ -143,6 +138,6 @@ public class PlatformCheckService implements CheckPlatformsUseCase {
                     .filter(d -> d.platform() != platform || !d.gigId().equals(gigId)).toList(),
                     check.unreadable(), check.unlinked());
         }
-        listeners.changed();
+        live.changed(LiveUpdates.Topic.CHECK);
     }
 }

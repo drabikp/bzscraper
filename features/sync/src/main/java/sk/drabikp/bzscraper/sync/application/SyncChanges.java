@@ -1,22 +1,23 @@
 package sk.drabikp.bzscraper.sync.application;
 
-import sk.drabikp.bzscraper.gig.application.ChangeListeners.Subscription;
-import sk.drabikp.bzscraper.gig.application.ChangeListeners;
-import sk.drabikp.bzscraper.sync.application.port.in.WatchSyncUseCase;
+import sk.drabikp.bzscraper.gig.application.port.out.LiveUpdates;
 import sk.drabikp.bzscraper.sync.application.port.out.SyncNotifier;
 
-/** Passes "the sync changed" from the engine and the use cases to every page that follows it. */
-public class SyncChanges implements SyncNotifier, WatchSyncUseCase {
+/**
+ * Passes "the sync changed" from the engine and the use cases on to the open pages. A gig's
+ * platform state is part of the catalog's gigs too, so they are read again as well.
+ */
+public class SyncChanges implements SyncNotifier {
 
-    private final ChangeListeners listeners = new ChangeListeners();
+    private final LiveUpdates live;
 
-    @Override
-    public Subscription watch(Runnable onChange) {
-        return listeners.add(onChange);
+    public SyncChanges(LiveUpdates live) {
+        this.live = live;
     }
 
     @Override
     public void changed() {
-        listeners.changed();
+        live.changed(LiveUpdates.Topic.SYNC);
+        live.changed(LiveUpdates.Topic.GIGS);
     }
 }

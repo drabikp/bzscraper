@@ -5,79 +5,84 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Run
 
 ```bash
-./mvnw clean install                                   # Build every module
+./mvnw clean install                                   # Build every module (incl. the page: Node is fetched once into web/frontend/node)
 ./mvnw -pl app -am spring-boot:run                     # Run (port 8080; working dir = repo root)
-./mvnw test                                            # Run all tests
+./mvnw test                                            # Run all tests (Java + the page's Vitest tests)
 ./mvnw test -Dtest=GigPublishingServiceTest -Dsurefire.failIfNoSpecifiedTests=false   # One class
 ./mvnw -pl platforms/bandzone -am test                 # One module (and what it needs)
-./mvnw -Pproduction -pl app -am package                # Production build (Vaadin frontend optimization)
+cd web/frontend && npm run dev                         # The page with hot reload on :5173 (API proxied to :8080)
+cd web/frontend && npm test                            # The page's tests only
 ```
 
+Sign-in: one account, `bzscraper.auth.username` (default `admin`) / `bzscraper.auth.password`
+(plain or `{bcrypt}…`; NEVER in source — the local script reads it from the git-ignored
+`.app-login`; empty → a random one is written to the log on start).
+
 **Structure: vertical slices.** One Maven module per feature, each holding its own domain,
-application (use cases + ports) and adapters (persistence, pages, workers) in packages
+application (use cases + ports) and adapters (persistence, REST API, workers) in packages
 `sk.drabikp.bzscraper.<feature>.{domain, application, application.port.in|out, adapter.in.*,
-adapter.out.*, config}`. `gig` is the shared kernel, `ui` what every page shares; platforms
-plug into the features' ports.
+adapter.out.*, config}`. `gig` is the shared kernel; platforms plug into the features' ports;
+the page is a separate React app (`web/frontend`) over the features' REST APIs.
 
 ```
 features/gig        shared kernel: Gig + its value objects (GigId.key() = how records refer to a
-                    gig), Platform/PlatformTraits/Platforms, Publication, GigRepository/
-                    PublishedGigStore/Transactions, UserFacingException, ChangeListeners, TextFold;
-                    their JPA persistence, SpringTransactions, H2 backup, the Clock; THE schema
-                    (db/migration, Flyway); test-jar: gig.domain.TestGigs, gig.domain.platform.TestPlatforms
-features/ui         the pages' kit: UserErrors (a refused/failed action → the user), Notices
-features/places     Town, TownChoice, place search (Photon)
-features/sync       outbox (SyncTask…, SyncLabels: how sync work reads), queueing (QueueSyncWork),
-                    read-only state (SyncStateUseCase), watching (WatchSyncUseCase ← SyncChanges),
-                    workflow engine + step ports (SyncStep, OneAtATimeStep), breakers, pause,
-                    settings, sync log page, worker; test-jar: SyncFakes, SyncOutboxContract
-features/catalog    catalog use cases, GigWrites (← CatalogWrites), GigMovedListener, GigExporter,
-                    catalog + add pages, adapter.in.web.form.GigForm; test-jar: CatalogFakes
-features/importing  import planner/merge, GigImporter port (+ PlatformReads), import page
-features/check      Reconciler, platform check service + page + nightly schedule
+                    gig, GigId.token() = in addresses), GigDraft (a gig as the form holds it),
+                    Platform/PlatformTraits/Platforms, Publication, GigRepository/PublishedGigStore/
+                    Transactions/LiveUpdates, UserFacingException (code + args), InvalidGigException,
+                    TextFold; their JPA persistence, SpringTransactions, H2 backup, the Clock; THE
+                    schema (db/migration, Flyway); test-jar: gig.domain.TestGigs, gig.domain.platform.TestPlatforms
+features/places     Town, TownChoice, place search (Photon); /api/places
+features/sync       outbox (SyncTask…, SyncLabels), queueing (QueueSyncWork), read-only state
+                    (SyncStateUseCase), workflow engine + step ports (SyncStep, OneAtATimeStep),
+                    breakers, pause, settings, worker; /api/sync; test-jar: SyncFakes, SyncOutboxContract
+features/catalog    catalog use cases, GigWrites (← CatalogWrites), GigMovedListener, GigExporter;
+                    /api/gigs, /api/platforms, /api/exports; test-jar: CatalogFakes
+features/importing  import planner/merge, GigImporter port (+ PlatformReads); /api/import (reads in the background)
+features/check      Reconciler, platform check service + nightly schedule; /api/check
 features/calendar   calendar domain (+ domain.event: the calendar's events; + domain.rules: profile
-                    and classifier), review service, stores, iCal feed, profile file, calendar page;
+                    and classifier), review service, stores, iCal feed, profile file; /api/calendar;
                     shipped presets (calendar/*.profile)
 platforms/browser   PlatformBrowser, BrowserProfile, WarmBrowser, properties; test-jar: TestChromium
 platforms/bandzone      bandzone (traits, properties, exception) · scrape · portal (client API, stub)
                         · portal.selenium (the Selenium client + page objects) · step · rest
-                        (the legacy `/gigs/{band_slug}` endpoint)
+                        (the legacy public `/gigs/{band_slug}` endpoint)
 platforms/bandsintown   bandsintown (traits, properties, exception, RemovalReason) · portal ·
                         portal.selenium (+ the event list → gig mapping) · step · importing · csv
-app/                BzscraperApplication, shell (AppShellConfig, MainLayout: the menu), application
-                    .properties, Vaadin theme + dev bundle (Vaadin takes app/ as its project folder);
-                    ArchitectureTest, PlatformNamesTest
+web/live            LiveUpdates as server-sent events (SseLiveUpdates, GET /api/events) — the only
+                    place that knows SSE; everyone else tells the LiveUpdates port
+web/frontend        the page: React + TypeScript + Vite + Mantine 8, TanStack Query, React Router,
+                    i18next (English + Slovak), a PWA (vite-plugin-pwa); built into the jar's static/
+app/                BzscraperApplication; web (security: one account, session + remember-me + CSRF
+                    for a single-page app; ApiErrors; SinglePageApp: the page's own addresses load
+                    index.html); application.properties; ArchitectureTest, PlatformNamesTest, ApiSecurityTest
 ```
 
-Module order (Maven forbids cycles): `gig ← ui ← places ← sync ← catalog ← importing ← check`,
-`catalog ← calendar`; platforms depend on the features whose ports they implement; only `app`
-sees everything. Another module uses a feature ONLY through its `domain` and its ports
-(`application.port.in` to call, `.out` to implement) — never its services, adapters or wiring
-(e.g. the calendar and Import write gigs through `GigWrites`, the check asks the sync through
-`SyncStateUseCase`, pages follow the sync through `WatchSyncUseCase`). The one exception is a
-feature's form (`adapter.in.web.form`), which another feature's page may embed (the calendar
-pre-fills `GigForm` with a `GigForm.Draft`). Where a feature lower in the order needs something
-from a higher one, the lower one owns a port and the higher one implements it
-(`GigMovedListener`: the calendar's links follow a gig's identity move). The menu is the app's
-`MainLayout` (`@Layout`), built from each page's own `@Menu` — no page links to another
-feature's page. Each feature wires its own services (`<feature>.config.<Feature>Configuration`,
-next to its properties record); the implementations are public only so that wiring can build
-them — `ArchitectureTest` keeps everyone else on the ports. Inside a platform, the steps, the
-importer and the endpoint use the portal client; its Selenium implementation and page objects
-(package-private) are used by nothing else.
+Module order (Maven forbids cycles): `gig ← places ← sync ← catalog ← importing ← check`,
+`catalog ← calendar`; platforms depend on the features whose ports they implement; `web/live`
+on the kernel only; only `app` sees everything. Another module uses a feature ONLY through its
+`domain` and its ports (`application.port.in` to call, `.out` to implement) — never its services,
+adapters or wiring (e.g. the calendar and Import write gigs through `GigWrites`, the check asks
+the sync through `SyncStateUseCase`). Where a feature lower in the order needs something from a
+higher one, the lower one owns a port and the higher one implements it (`GigMovedListener`: the
+calendar's links follow a gig's identity move). Each feature wires its own services
+(`<feature>.config.<Feature>Configuration`, next to its properties record); the implementations
+are public only so that wiring can build them — `ArchitectureTest` keeps everyone else on the
+ports. Inside a platform, the steps, the importer and the endpoint use the portal client; its
+Selenium implementation and page objects (package-private) are used by nothing else.
 `ArchitectureTest` (ArchUnit): domain depends only on the JDK and domain code; application code
-uses no framework, logger, adapter, config or page kit; a feature is used from outside only
-through its domain, ports and forms; the kernel's persistence and wiring are its own; the
-kernel and the page kit know no feature; the features know no platform, nor a platform another;
-a platform's browser code stays behind its portal client; no cycles between modules nor between
-any two packages. `PlatformNamesTest`: no feature source (code, string or comment) names a
-platform.
+uses no framework, logger, adapter, config, live module or web setup; a feature is used from
+outside only through its domain and ports; the kernel's persistence and wiring are its own; the
+kernel knows no feature; live updates are used only through their port and the live module knows
+only the kernel; nothing uses the app's web setup; the features know no platform, nor a platform
+another; a platform's browser code stays behind its portal client; no cycles between modules nor
+between any two packages. `PlatformNamesTest`: no feature source (code, string or comment) names
+a platform.
 
 Configuration is typed: a `@ConfigurationProperties` record per module (`<feature>.config` for
 the features: `CalendarProperties`, `SyncProperties`, `CheckProperties`, `BackupProperties`,
 `PlacesProperties`; the platform's root package for `BandzoneProperties`,
-`BandsintownProperties`, `BrowserProperties`; secrets are hidden in their `toString`); a
-platform switched on without its login stops the app at start.
+`BandsintownProperties`, `BrowserProperties`; `AuthProperties` in the app; secrets are hidden in
+their `toString`); a platform switched on without its login stops the app at start.
 `spring-boot:run` runs in the repo root (`./data`, `./calendar` are relative to it).
 Spring tests: `app` (whole context) and each module with persistence (`gig`, `sync`, `calendar`:
 its own `<Feature>PersistenceTestApplication` over its persistence package). These are marked
@@ -85,13 +90,41 @@ its own `<Feature>PersistenceTestApplication` over its persistence package). The
 that module's whole test-classes folder (only the packaged jar is filtered to the shared helpers),
 and its context scan must skip the other module's test application.
 
+## The page (web/frontend)
+
+Built from a regular user's view, phone first, installable (PWA):
+- **Places**: Gigs (cards on a phone, a selectable table with bulk actions on a desktop; the
+  state on every platform per gig), a gig's page (a card per platform with Publish / Retry /
+  Discard / Open, its sync history, its calendar event; ⋯ → edit, update everywhere, publish on
+  more, cancel / reactivate, delete — the confirmations say what happens on each platform, from
+  the traits), the gig form (When / Where / About; the town picker; the band's time behind
+  "Festival?"; after a new gig: "Publish now?"), **Inbox** (everything that needs the user, each
+  with its fix: failed sync work, a platform held back, the calendar's events that need a look,
+  the nightly check's differences — `lib/attention.ts`), Calendar (suggestions, filters, why),
+  More → Activity (sync log, pause), Import (background read → decide → import), Platform
+  check, Settings (language, light/dark, platforms, sign out).
+- Phone: a bottom bar (Gigs · Inbox · Calendar · More), sheets slide up from the bottom, toasts
+  at the top; desktop: the menu on the left, dialogs centred.
+- **Data**: TanStack Query per API resource (`api/hooks.ts`); every change reads the affected
+  parts again; **live updates**: one `EventSource` on `/api/events` (`api/live.ts`) — an event
+  names what changed (`gigs`, `sync`, `check`, `import`, `calendar`) and that part is read again;
+  after the phone woke the app up, everything is.
+- **Languages**: `i18n/en.ts`, `i18n/sk.ts` (plural forms per language: Slovak one/few/many/other);
+  a test checks both have the same keys and that every key the pages use exists. The API says
+  refusals as `{code, args, message}` (409) and the page translates the code (`errors.*`);
+  the calendar's reasons (`why`), differences and the check's differences come as codes + values
+  too. What the platforms themselves answer (sync messages, "left out" reasons) stays as they
+  said it (English).
+- **CSRF**: the `XSRF-TOKEN` cookie → `X-XSRF-TOKEN` header (`api/client.ts`); a 401 from the
+  API shows the sign-in.
+
 ## What This Project Does
 
 A personal Spring Boot tool for a single band's gig admin — a **gig sync hub**. Gigs
 are kept in a local catalog (H2 file DB, the source of truth), can be imported from
 Bandzone.cz, and are **published to listing platforms** (Bandzone, Bandsintown). Edits,
 cancel, reactivate and delete in the catalog are propagated to every platform the gig
-was published to. A Vaadin UI drives it; a per-platform file download (`GigExporter`, the
+was published to. A React page (phone-first, installable) drives it over a REST API; a per-platform file download (`GigExporter`, the
 Bandsintown CSV) and a REST endpoint (`/gigs/{band_slug}`, the catalog's gigs with their
 Bandzone concert — in the Bandzone module, where it began) exist too.
 
@@ -168,13 +201,13 @@ its own). Moot work (gig deleted/cancelled/published meanwhile) ends done with a
   `e.outcome()`, and per-row replies (`BitSession.Created`/`Edited`) carry their kind too. After a
   restart, RUNNING repeatable tasks run again, others go FAILED ("check the platform").
   FAILED waits for the user: Retry (from the step where it stopped) / Discard on
-  `/sync` (`SyncLogView`). `markRunning` only starts a still-PENDING task; every status change
+  the Activity page (`/activity`, `/api/sync`). `markRunning` only starts a still-PENDING task; every status change
   is checked against `SyncStatus.canBecome` (a DONE task stays done whoever writes late) and
   `sync_task.version` (V12) makes two concurrent writers fail instead of overwriting.
 - A new task REPLACES the gig's FAILED tasks it redoes on that platform (`replaceFailed`):
   a new publish the failed publish, a new update the failed update, a delete the failed
   updates/cancels (never a failed publish — it may have created the event; the user checks).
-- **Pause / Resume** on `/sync` (`PauseSyncUseCase`, `SyncPause`): the gig in progress
+- **Pause / Resume** on Activity / Settings (`PauseSyncUseCase`, `SyncPause`): the gig in progress
   finishes, nothing new starts, the waiting work stays queued; a pause survives a restart
   (`SettingsStore`, table `app_setting`).
 - **Circuit breaker per platform** (`PlatformBreakers`, `PlatformBreakerUseCase`, in memory):
@@ -182,17 +215,17 @@ its own). Moot work (gig deleted/cancelled/published meanwhile) ends done with a
   else — done, refused, failed for good — shows the platform answering and resets it);
   `bzscraper.sync.breaker.failures` (3) in a row → the platform is held back for
   `.cooldown-minutes` (30): its tasks stay queued (`SyncOutbox.nextDue(now, skipping)`), the
-  other platforms go on; then one trial batch decides. `/sync` shows it with "Resume <platform>".
+  other platforms go on; then one trial batch decides. The Inbox, Activity and Settings show it with "Resume now".
 - **One browser per platform** (`PlatformBrowser`): a sync step doesn't wait for a browser
   another operation holds (BUSY → postponed); a read the user started (Import, the platform
   check) waits up to 10 min. The browser stays warm ~60 s after a session (`WarmBrowser`), so
   the next step or task takes it over (one start + login check per run, not per gig); closed
   when idle and on shutdown. Failures leave a screenshot,
   `$TMPDIR/bzscraper-<platform>-<step>.png`.
-- UI: actions return a `QueueResult` (shown as "Queued: …"); the catalog's Platforms
-  column and a summary line show queued/running/retrying/failed live (`WatchSyncUseCase`
-  → server push); actions on a gig whose task is RUNNING are refused by the core
-  (`GigWrites`), the views only grey the buttons.
+- Page: actions return a `QueueResult` (a toast "Publishing on …" / "Left out: …"); every gig
+  shows its state per platform (live / queued / running / retrying / failed / not there) and
+  follows it live (`SyncChanges` → `LiveUpdates` → server-sent events); actions on a gig whose
+  task is RUNNING are refused by the core (`GigWrites`, 409 `gigBusy`).
 - **Optimistic locking**: `UpdateGigUseCase.update(seen, updated)` — `seen` is the gig as the
   user opened it; if the catalog's gig is no longer that (changed in another window, by an
   import or the calendar, or deleted) nothing changes and `ConcurrentChangeException` says
@@ -396,12 +429,18 @@ every start to `./data/backups` (one per day, newest 14 kept); restore with
 ## Key Dependencies
 
 - Spring Boot 4.0.3, Java 21; Spring Data JPA + H2 2.4.240 (pinned) + Flyway
-- Vaadin 25.0.5 (UI)
+- The page: React 19 + TypeScript, Vite 6, Mantine 8, TanStack Query 5, React Router 7, i18next,
+  vite-plugin-pwa; built by Maven (frontend-maven-plugin, Node 22 fetched into web/frontend/node)
 - JSoup 1.22.1 (HTML scraping)
 - OpenCSV 5.12.0 (CSV)
 - Selenium 4.27.0 (Bandzone + Bandsintown) — needs a Chromium + chromedriver runtime
 
 ## Testing
+
+`ApiSecurityTest` (app, MockMvc): the API is 401 until signed in, needs the CSRF token, a refusal
+is a 409 with its code, the remember-me cookie outlives a restart, the page's own addresses load
+`index.html`. The page: Vitest (`web/frontend`, run by `./mvnw test`) — both languages have the
+same keys and every key the pages use, dates, the calendar's show applied to the form.
 
 JUnit 5 + Mockito + AssertJ (`spring-boot-starter-test`). The domain has direct unit tests;
 service tests use `SyncFakes` (sync test-jar: in-memory outbox/records/repository/settings,

@@ -10,10 +10,25 @@ import java.util.List;
  * reading the platform, not by anything the app did: a copy changed or deleted there by
  * hand, or placed in another town.
  *
- * @param differences what differs, readable ("date: catalog 18 Sep 2026, <platform> 19 Sep 2026"); empty for MISSING
+ * @param differences what differs; empty for MISSING
  */
 public record Drift(Platform platform, GigId gigId, String gigLabel, String externalRef, Kind kind,
-                    List<String> differences) {
+                    List<Difference> differences) {
+
+    /**
+     * One thing that differs: which {@link Field}, the catalog's value and the platform's (ISO
+     * dates and times; {@code PLACE}: the town and how many km away the platform put it;
+     * {@code CANCELLED}: "true"/"false"), and the English sentence ({@link #toString()}).
+     */
+    public record Difference(Field field, String catalog, String platform, String text) {
+
+        @Override
+        public String toString() {
+            return text;
+        }
+    }
+
+    public enum Field { DATE, TIME, NAME, VENUE, TOWN, COUNTRY, PLACE, CANCELLED }
 
     public enum Kind {
         /** The platform no longer lists the event the gig was published as. */

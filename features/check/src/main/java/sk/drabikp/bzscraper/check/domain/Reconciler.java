@@ -70,7 +70,7 @@ public final class Reconciler {
                 }
                 continue;
             }
-            List<String> differences = differences(traits, gig, copy);
+            List<Drift.Difference> differences = differences(traits, gig, copy);
             if (!differences.isEmpty()) {
                 drifts.add(new Drift(platform, gig.id(), label, record.externalRef(), Drift.Kind.DIFFERENT, differences));
             }
@@ -85,38 +85,48 @@ public final class Reconciler {
         return (int) onPlatform.stream().filter(i -> i.platform() == platform && !linked.contains(i.externalRef())).count();
     }
 
-    static List<String> differences(PlatformTraits traits, Gig gig, ImportedGig listed) {
+    static List<Drift.Difference> differences(PlatformTraits traits, Gig gig, ImportedGig listed) {
         Gig copy = listed.gig();
-        List<String> differences = new ArrayList<>();
+        List<Drift.Difference> differences = new ArrayList<>();
         String name = traits.displayName();
         ZonedDateTime expected = traits.listsBandSlot() ? gig.schedule().showStart() : gig.schedule().start();
         ZonedDateTime shown = copy.schedule().start().withZoneSameInstant(expected.getZone());
         if (!expected.toLocalDate().equals(shown.toLocalDate())) {
-            differences.add("date: catalog " + expected.format(DAY) + ", " + name + " " + shown.format(DAY));
+            differences.add(new Drift.Difference(Drift.Field.DATE, expected.toLocalDate().toString(),
+                    shown.toLocalDate().toString(), "date: catalog " + expected.format(DAY) + ", " + name + " "
+                    + shown.format(DAY)));
         } else if (!expected.toLocalTime().equals(shown.toLocalTime())) {
-            differences.add("time: catalog " + expected.format(TIME) + ", " + name + " " + shown.format(TIME));
+            differences.add(new Drift.Difference(Drift.Field.TIME, expected.format(TIME), shown.format(TIME),
+                    "time: catalog " + expected.format(TIME) + ", " + name + " " + shown.format(TIME)));
         }
         if (!fold(gig.title()).equals(fold(copy.title()))) {
-            differences.add("name: catalog '" + gig.title() + "', " + name + " '" + copy.title() + "'");
+            differences.add(new Drift.Difference(Drift.Field.NAME, gig.title(), copy.title(),
+                    "name: catalog '" + gig.title() + "', " + name + " '" + copy.title() + "'"));
         }
         if (!sameVenue(gig.location().venue(), copy.location().venue())) {
-            differences.add("venue: catalog " + quoted(gig.location().venue()) + ", " + name + " "
-                    + quoted(copy.location().venue()));
+            differences.add(new Drift.Difference(Drift.Field.VENUE, gig.location().venue(), copy.location().venue(),
+                    "venue: catalog " + quoted(gig.location().venue()) + ", " + name + " "
+                    + quoted(copy.location().venue())));
         }
         if (!sameTown(gig.location().city(), copy.location().city())) {
-            differences.add("town: catalog " + gig.location().city() + ", " + name + " " + copy.location().city());
+            differences.add(new Drift.Difference(Drift.Field.TOWN, gig.location().city(), copy.location().city(),
+                    "town: catalog " + gig.location().city() + ", " + name + " " + copy.location().city()));
         } else if (gig.location().country() != null && copy.location().country() != null
                 && gig.location().country() != copy.location().country()) {
-            differences.add("country: catalog " + gig.location().countryName() + ", " + name + " "
-                    + copy.location().countryName() + " (a town of the same name elsewhere?)");
+            differences.add(new Drift.Difference(Drift.Field.COUNTRY, gig.location().country().name(),
+                    copy.location().country().name(), "country: catalog " + gig.location().countryName() + ", "
+                    + name + " " + copy.location().countryName() + " (a town of the same name elsewhere?)"));
         } else {
-            farFromTown(gig, listed).ifPresent(km -> differences.add(String.format(Locale.ROOT,
+            farFromTown(gig, listed).ifPresent(km -> differences.add(new Drift.Difference(Drift.Field.PLACE,
+                    gig.location().city() + " (" + gig.location().address().district() + ")",
+                    String.format(Locale.ROOT, "%.0f", km), String.format(Locale.ROOT,
                     "place: %s put it %.0f km from %s (%s)", name, km, gig.location().city(),
-                    gig.location().address().district())));
+                    gig.location().address().district()))));
         }
         if (traits.keepsCancelledEvents() && gig.cancelled() != copy.cancelled()) {
-            differences.add(gig.cancelled() ? "cancelled in the catalog, not on " + name
-                    : "cancelled on " + name + ", not in the catalog");
+            differences.add(new Drift.Difference(Drift.Field.CANCELLED, String.valueOf(gig.cancelled()),
+                    String.valueOf(copy.cancelled()), gig.cancelled() ? "cancelled in the catalog, not on " + name
+                    : "cancelled on " + name + ", not in the catalog"));
         }
         return differences;
     }

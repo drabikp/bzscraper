@@ -20,7 +20,6 @@
 	     ports (platforms/); app wires everything and runs. -->
 	<modules>
 		<module>features/gig</module>
-		<module>features/ui</module>
 		<module>features/places</module>
 		<module>features/sync</module>
 		<module>features/catalog</module>
@@ -30,12 +29,13 @@
 		<module>platforms/browser</module>
 		<module>platforms/bandzone</module>
 		<module>platforms/bandsintown</module>
+		<module>web/live</module>
+		<module>web/frontend</module>
 		<module>app</module>
 	</modules>
 
 	<properties>
 		<java.version>21</java.version>
-		<vaadin.version>25.0.5</vaadin.version>
 		<!-- Pinned on purpose: H2's file format changes between versions, so a Spring Boot
 		     upgrade must not silently bump it. To upgrade, restore a SCRIPT backup
 		     (data/backups) into a fresh database with the new version. -->
@@ -46,13 +46,6 @@
 
 	<dependencyManagement>
 		<dependencies>
-			<dependency>
-				<groupId>com.vaadin</groupId>
-				<artifactId>vaadin-bom</artifactId>
-				<version>${vaadin.version}</version>
-				<type>pom</type>
-				<scope>import</scope>
-			</dependency>
 			<dependency>
 				<groupId>sk.drabik</groupId>
 				<artifactId>bzscraper-gig</artifactId>
@@ -66,7 +59,12 @@
 			</dependency>
 			<dependency>
 				<groupId>sk.drabik</groupId>
-				<artifactId>bzscraper-ui</artifactId>
+				<artifactId>bzscraper-live</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>sk.drabik</groupId>
+				<artifactId>bzscraper-frontend</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>

@@ -46,9 +46,9 @@ public class CatalogWrites implements GigWrites {
     public QueueResult replace(Gig seen, Gig updated) {
         GigId originalId = seen.id();
         Gig current = gigRepository.findById(originalId).orElseThrow(() ->
-                new ConcurrentChangeException("The gig was deleted meanwhile — nothing was changed."));
+                new ConcurrentChangeException(ConcurrentChangeException.DELETED, "The gig was deleted meanwhile — nothing was changed."));
         if (!current.equals(seen)) {
-            throw new ConcurrentChangeException("The gig was changed meanwhile (in another window, by an import or "
+            throw new ConcurrentChangeException(ConcurrentChangeException.CHANGED, "The gig was changed meanwhile (in another window, by an import or "
                     + "from the calendar) — nothing was changed. Reload it and edit again.");
         }
         requireNotBusy(current);
