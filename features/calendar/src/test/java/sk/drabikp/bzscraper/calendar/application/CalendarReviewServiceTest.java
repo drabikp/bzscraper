@@ -16,6 +16,7 @@ import sk.drabikp.bzscraper.calendar.domain.rules.ProfileRule;
 import sk.drabikp.bzscraper.calendar.domain.rules.RuleKind;
 import sk.drabikp.bzscraper.catalog.application.CatalogFakes;
 import sk.drabikp.bzscraper.gig.application.UserFacingException;
+import sk.drabikp.bzscraper.gig.application.port.out.LiveUpdates;
 import sk.drabikp.bzscraper.gig.domain.Gig;
 import sk.drabikp.bzscraper.gig.domain.TestGigs;
 import sk.drabikp.bzscraper.sync.application.SyncFakes;
@@ -47,7 +48,8 @@ class CalendarReviewServiceTest {
     private final CalendarReviewService service = new CalendarReviewService(feed, profiles, decisions, snapshots,
             links, gigs, new SyncFakes.DirectTransactions(), clock, new BandProfile.Thresholds(4, -1, -4),
             CatalogFakes.writes(gigs, new SyncFakes.Published(), outbox, SyncFakes.requests(outbox,
-                    new SyncFakes.Published(), new SyncFakes.Signals(), clock), new CalendarLinksFollowGigs(links)));
+                    new SyncFakes.Published(), new SyncFakes.Signals(), clock), new CalendarLinksFollowGigs(links)),
+            LiveUpdates.NONE);
 
     @BeforeEach
     void rules() {

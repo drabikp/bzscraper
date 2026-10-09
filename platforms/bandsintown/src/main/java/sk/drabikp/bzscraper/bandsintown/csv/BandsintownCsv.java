@@ -88,6 +88,12 @@ public final class BandsintownCsv {
         return address != null && address.street() != null ? address.street() : "";
     }
 
+    // a village's name repeats more than a town's, and Photon often has no postal code for it
+    private static String region(Gig gig) {
+        Address address = gig.location().address();
+        return address != null && address.region() != null ? address.region() : "";
+    }
+
     private static String postalCode(Gig gig) {
         Address address = gig.location().address();
         return address != null && address.postalCode() != null ? address.postalCode() : "";
@@ -105,7 +111,7 @@ public final class BandsintownCsv {
                 gig.location().countryName(),                                   // Country*
                 street(gig),                                                    // Address
                 gig.location().city(),                                          // City*
-                "",                                                             // Region*
+                region(gig),                                                    // Region*
                 postalCode(gig),                                                // Postal Code
                 gig.location().timezone(),                                      // Timezone*
                 start.format(DATE),                                             // Start Date*

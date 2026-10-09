@@ -1,4 +1,17 @@
-/** Calls the app's API: JSON both ways, the session cookie, and the CSRF token on every change. */
+import createClient from 'openapi-fetch';
+import type { paths as AuthPaths } from './generated/auth';
+import type { paths as CalendarPaths } from './generated/calendar';
+import type { paths as CatalogPaths } from './generated/catalog';
+import type { paths as CheckPaths } from './generated/check';
+import type { paths as ImportPaths } from './generated/import';
+import type { paths as PlacesPaths } from './generated/places';
+import type { paths as SyncPaths } from './generated/sync';
+
+/**
+ * Calls the app's API, typed by its OpenAPI specs (src/api/generated, from every module's
+ * src/main/openapi): JSON both ways, the session cookie, and the CSRF token on every change.
+ * A refusal or failure throws an {@link ApiError}; a 401 tells the page the session is gone.
+ */
 
 export class ApiError extends Error {
   constructor(
@@ -30,30 +43,6 @@ async function csrfToken(fresh = false): Promise<string> {
   return cookie('XSRF-TOKEN') ?? body.token;
 }
 
-type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
-
-export async function api<T>(path: string, method: Method = 'GET', body?: unknown, retried = false): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
-  if (method !== 'GET') headers['X-XSRF-TOKEN'] = await csrfToken(retried);
-  const response = await fetch(path, {
-    method,
-    headers,
-    credentials: 'same-origin',
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (response.status === 403 && method !== 'GET' && !retried) {
-    return api<T>(path, method, body, true); // the token was stale (e.g. after signing in)
-  }
-  if (response.status === 401) {
-    if (!path.startsWith('/api/auth/')) onUnauthorized();
-    throw await problem(response);
-  }
-  if (!response.ok) throw await problem(response);
-  const text = await response.text();
-  return (text ? JSON.parse(text) : undefined) as T;
-}
-
 async function problem(response: Response): Promise<ApiError> {
   try {
     const p = (await response.json()) as { code?: string; args?: Record<string, string>; message?: string };
@@ -61,4 +50,35 @@ async function problem(response: Response): Promise<ApiError> {
   } catch {
     return new ApiError(response.status, response.status === 401 ? 'unauthorized' : 'error', {}, response.statusText);
   }
+}
+
+/** The client's fetch: adds the CSRF token to changes (a stale one — e.g. after signing in — is renewed once). */
+async function apiFetch(request: Request, retried = false): Promise<Response> {
+  const changes = request.method !== 'GET';
+  const again = changes && !retried ? request.clone() : null;
+  if (changes) request.headers.set('X-XSRF-TOKEN', await csrfToken(retried));
+  const response = await fetch(request);
+  if (response.status === 403 && again) return apiFetch(again, true);
+  if (response.status === 401) {
+    if (!new URL(request.url).pathname.startsWith('/api/auth/')) onUnauthorized();
+    throw await problem(response);
+  }
+  if (!response.ok) throw await problem(response);
+  return response;
+}
+
+type Paths = AuthPaths & CatalogPaths & PlacesPaths & SyncPaths & CalendarPaths & CheckPaths & ImportPaths;
+
+export const api = createClient<Paths>({
+  baseUrl: window.location.origin,
+  credentials: 'same-origin',
+  fetch: (request) => apiFetch(request),
+});
+
+/**
+ * The answer's data; errors were thrown already. ({@code undefined} where the API answers
+ * nothing, e.g. 204.)
+ */
+export async function data<T>(call: Promise<{ data?: T }>): Promise<T> {
+  return (await call).data as T;
 }

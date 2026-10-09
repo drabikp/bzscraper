@@ -19,20 +19,22 @@ import { IconCalendarOff, IconChevronDown, IconRefresh, IconSearch } from '@tabl
 import { useMemo, useState } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router';
 import { useCalendar, useCalendarAction, useCalendarRules, useReadCalendar } from '../api/hooks';
 import type { CalendarFilter, CalendarRow } from '../api/types';
 import { ActionButtons } from '../components/ActionButtons';
 import { DateBlock } from '../components/DateBlock';
 import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
+import { Sheet } from '../components/Sheet';
 import { calendarRowBody, changeText, useCalendarRowActions } from '../lib/attention';
-import { fold, hhmm, localDate, relative, shortDate } from '../lib/format';
+import { fold, localDate, relative, shortDate, timeOfDay } from '../lib/format';
 import { done, failed } from '../lib/notify';
 
 const FILTERS: CalendarFilter[] = ['NEEDS_A_LOOK', 'MISSING', 'NOT_SURE', 'GIGS', 'NOT_GIGS', 'DECIDED', 'ALL'];
 
 function whenText(t: TFunction, row: CalendarRow): string {
-  if (!row.allDay) return `${shortDate(row.start.split('T')[0])} · ${hhmm(row.start.split('T')[1])}`;
+  if (!row.allDay) return `${shortDate(row.start.split('T')[0])} · ${timeOfDay(row.start.split('T')[1])}`;
   const last = localDate(row.end);
   last.setDate(last.getDate() - 1);
   const lastDay = `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`;
@@ -111,9 +113,20 @@ export function CalendarPage() {
   const calendar = useCalendar();
   const read = useReadCalendar();
   const action = useCalendarAction();
-  const [filter, setFilter] = useState<CalendarFilter>('NEEDS_A_LOOK');
-  const [query, setQuery] = useState('');
+  // in the address, so the view is the same after adding a gig, going back or reloading
+  const [params, setParams] = useSearchParams();
+  const shown = params.get('show') as CalendarFilter | null;
+  const filter: CalendarFilter = shown && FILTERS.includes(shown) ? shown : 'NEEDS_A_LOOK';
+  const query = params.get('q') ?? '';
+  const setParam = (name: string, value: string, fallback: string) =>
+    setParams((p) => {
+      if (value === fallback) p.delete(name); else p.set(name, value);
+      return p;
+    }, { replace: true });
+  const setFilter = (f: CalendarFilter) => setParam('show', f, 'NEEDS_A_LOOK');
+  const setQuery = (q: string) => setParam('q', q, '');
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [linking, setLinking] = useState(false);
   const rules = useCalendarRules(rulesOpen);
   const data = calendar.data;
 
@@ -165,18 +178,43 @@ export function CalendarPage() {
       {counts && (counts.linkable > 0 || counts.changes > 0) && (
         <Group gap="xs">
           {counts.linkable > 0 && (
-            <Button variant="light" size="sm" loading={action.isPending}
-              onClick={() => action.mutate({ path: 'link-same-day' }, { onSuccess: (r) => done(t('toast.linkedSameDay', { count: r?.linked ?? 0 })), onError: failed })}>
+            <Button variant="light" size="sm" onClick={() => setLinking(true)}>
               {t('calendar.linkSameDay', { count: counts.linkable })}
             </Button>
           )}
           {counts.changes > 0 && (
-            <Button variant="default" size="sm" onClick={() => action.mutate({ path: 'seen' }, { onError: failed })}>
+            <Button variant="default" size="sm" onClick={() => action.mutate({ kind: 'seenAll' }, { onError: failed })}>
               {t('calendar.allSeen')}
             </Button>
           )}
         </Group>
       )}
+
+      <Sheet opened={linking} onClose={() => setLinking(false)} title={t('calendar.linkSameDayTitle')}>
+        <Stack gap="md">
+          <Text size="sm">{t('calendar.linkSameDayText')}</Text>
+          <Stack gap="xs">
+            {(data?.rows ?? []).filter((r) => r.linkable).map((r) => (
+              <Paper key={r.eventId} withBorder p="sm">
+                <Text fw={700} size="sm">{shortDate(r.draft.date)} · {r.title}</Text>
+                {r.match.gig && (
+                  <Text size="sm" c="dimmed">→ {shortDate(r.match.gig.start.split('T')[0])} · {r.match.gig.title} · {r.match.gig.city}</Text>
+                )}
+              </Paper>
+            ))}
+          </Stack>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setLinking(false)}>{t('common.cancel')}</Button>
+            <Button loading={action.isPending}
+              onClick={() => action.mutate({ kind: 'linkSameDay' }, {
+                onSuccess: (r) => { setLinking(false); done(t('toast.linkedSameDay', { count: r?.linked ?? 0 })); },
+                onError: failed,
+              })}>
+              {t('calendar.linkThem')}
+            </Button>
+          </Group>
+        </Stack>
+      </Sheet>
 
       {rows.length === 0 ? (
         <EmptyState icon={<IconRefresh size={28} />} title={filter === 'NEEDS_A_LOOK' ? t('calendar.allGood') : t('calendar.none')}

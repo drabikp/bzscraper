@@ -10,6 +10,7 @@ import sk.drabikp.bzscraper.calendar.application.port.out.CalendarSnapshotStore;
 import sk.drabikp.bzscraper.calendar.application.port.out.CalendarUnavailableException;
 import sk.drabikp.bzscraper.calendar.domain.CalendarCatalogMatcher;
 import sk.drabikp.bzscraper.calendar.domain.CalendarChanges;
+import sk.drabikp.bzscraper.calendar.domain.CalendarFilter;
 import sk.drabikp.bzscraper.calendar.domain.CalendarGigDraft;
 import sk.drabikp.bzscraper.calendar.domain.CalendarGigDrafter;
 import sk.drabikp.bzscraper.calendar.domain.CalendarOverview;
@@ -25,6 +26,7 @@ import sk.drabikp.bzscraper.calendar.domain.rules.ProfileRule;
 import sk.drabikp.bzscraper.catalog.application.port.in.GigWrites;
 import sk.drabikp.bzscraper.gig.application.UserFacingException;
 import sk.drabikp.bzscraper.gig.application.port.out.GigRepository;
+import sk.drabikp.bzscraper.gig.application.port.out.LiveUpdates;
 import sk.drabikp.bzscraper.gig.application.port.out.Transactions;
 import sk.drabikp.bzscraper.gig.domain.Gig;
 import sk.drabikp.bzscraper.gig.domain.GigId;
@@ -34,7 +36,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -62,11 +63,13 @@ public class CalendarReviewService implements ReviewCalendarUseCase, CalendarCat
     private final Transactions transactions;
     private final Clock clock;
     private final BandProfile.Thresholds thresholds;
+    private final LiveUpdates live;
 
     public CalendarReviewService(CalendarFeed feed, BandProfileStore profileStore, CalendarDecisionStore decisionStore,
                                  CalendarSnapshotStore snapshotStore, CalendarLinkStore linkStore,
                                  GigRepository gigRepository, Transactions transactions, Clock clock,
-                                 BandProfile.Thresholds thresholds, GigWrites writes) {
+                                 BandProfile.Thresholds thresholds, GigWrites writes, LiveUpdates live) {
+        this.live = live;
         this.writes = writes;
         this.feed = feed;
         this.profileStore = profileStore;
@@ -92,6 +95,7 @@ public class CalendarReviewService implements ReviewCalendarUseCase, CalendarCat
             List<CalendarClassification> classified = classify(fresh, profile(), gigRepository.findAll());
             snapshotStore.saveRead(CalendarChanges.afterRead(snapshotStore.all(), classified, now), now);
         });
+        changed();
         return overview();
     }
 
@@ -124,16 +128,19 @@ public class CalendarReviewService implements ReviewCalendarUseCase, CalendarCat
             throw new IllegalArgumentException("a verdict is gig or not a gig");
         }
         decisionStore.decide(eventId, verdict);
+        changed();
     }
 
     @Override
     public void forget(String eventId) {
         decisionStore.forget(eventId);
+        changed();
     }
 
     @Override
     public void seen(String eventId) {
         transactions.inTransaction(() -> snapshotStore.find(eventId).ifPresent(this::markSeen));
+        changed();
     }
 
     @Override
@@ -141,6 +148,7 @@ public class CalendarReviewService implements ReviewCalendarUseCase, CalendarCat
         transactions.inTransaction(() -> snapshotStore.all().values().stream()
                 .filter(k -> k.change() != null)
                 .forEach(this::markSeen));
+        changed();
     }
 
     private void markSeen(KnownCalendarEvent known) {
@@ -167,6 +175,8 @@ public class CalendarReviewService implements ReviewCalendarUseCase, CalendarCat
             writes.add(gig);
             linkStore.link(eventId, gig.id());
         });
+        changed();
+        live.changed(LiveUpdates.Topic.GIGS);
     }
 
     @Override
@@ -177,29 +187,26 @@ public class CalendarReviewService implements ReviewCalendarUseCase, CalendarCat
             }
             linkStore.link(eventId, gigId);
         });
+        changed();
     }
 
     @Override
     public void unlink(String eventId) {
         linkStore.unlink(eventId);
+        changed();
     }
 
     @Override
     public int linkSameDayGigs() {
-        CalendarOverview overview = overview();
-        Set<GigId> taken = overview.rows().stream()
-                .filter(r -> r.match().state() == CatalogMatch.State.LINKED)
-                .map(r -> r.match().gig().id())
-                .collect(Collectors.toCollection(HashSet::new));
-        List<CalendarRow> candidates = overview.rows().stream()
-                .filter(r -> r.missingFromCatalog() && r.match().gig() != null && !taken.contains(r.match().gig().id()))
-                .toList();
-        // two gig events on a day with one catalog gig: the user picks
-        Map<GigId, Long> claims = candidates.stream()
-                .collect(Collectors.groupingBy(r -> r.match().gig().id(), Collectors.counting()));
-        List<CalendarRow> clear = candidates.stream().filter(r -> claims.get(r.match().gig().id()) == 1).toList();
+        List<CalendarRow> clear = CalendarFilter.linkable(overview().rows());
         transactions.inTransaction(() -> clear.forEach(r -> linkStore.link(r.eventId(), r.match().gig().id())));
+        changed();
         return clear.size();
+    }
+
+    /** The calendar page reads the calendar again. */
+    private void changed() {
+        live.changed(LiveUpdates.Topic.CALENDAR);
     }
 
     private List<CalendarClassification> classify(List<CalendarEvent> events, BandProfile profile,

@@ -44,6 +44,16 @@ public final class Platforms {
         return traits.keySet().stream().filter(p -> p.id().equals(id)).findFirst();
     }
 
+    /** The platform with this id; one that isn't there is a mistake of the caller. */
+    public Platform get(String id) {
+        return find(id).orElseThrow(() -> new IllegalArgumentException("not a platform: " + id));
+    }
+
+    /** The platforms with these ids, in the order given (none for null). */
+    public List<Platform> get(Collection<String> ids) {
+        return ids == null ? List.of() : ids.stream().distinct().map(this::get).toList();
+    }
+
     public PlatformTraits traits(Platform platform) {
         PlatformTraits known = traits.get(platform);
         return known != null ? known

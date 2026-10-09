@@ -8,7 +8,7 @@ import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
 import { IconCheck } from '@tabler/icons-react';
 import { usePlatformName } from '../lib/attention';
-import { hhmm, shortDate } from '../lib/format';
+import { shortDate, timeOfDay } from '../lib/format';
 import { done, failed } from '../lib/notify';
 
 interface Decision {
@@ -19,7 +19,7 @@ interface Decision {
 
 function versionText(v: ImportVersion, tba: string): string {
   const [day, time] = v.start.split('T');
-  return `${shortDate(day)} ${hhmm(time)} · ${v.title} · ${v.venue || tba}, ${v.city}`;
+  return `${shortDate(day)} ${timeOfDay(time)} · ${v.title} · ${v.venue || tba}, ${v.city}`;
 }
 
 /**

@@ -6,7 +6,7 @@ import sk.drabikp.bzscraper.places.domain.Town;
 import java.util.List;
 import java.util.Optional;
 
-/** Towns for the gig form: suggestions while typing, and the town a known address means. */
+/** Towns for the gig form (only fully known ones): suggestions while typing, and the town a known address means. */
 public interface FindPlacesUseCase {
 
     List<Town> search(String text);

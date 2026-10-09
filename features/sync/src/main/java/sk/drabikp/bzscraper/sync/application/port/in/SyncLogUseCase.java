@@ -1,5 +1,6 @@
 package sk.drabikp.bzscraper.sync.application.port.in;
 
+import sk.drabikp.bzscraper.sync.domain.SyncCounts;
 import sk.drabikp.bzscraper.sync.domain.SyncLogEntry;
 import sk.drabikp.bzscraper.sync.domain.SyncTask;
 
@@ -12,6 +13,15 @@ public interface SyncLogUseCase {
     List<SyncTask> unfinished();
 
     List<SyncTask> recent(int limit);
+
+    /** Which tasks a list shows: the latest ones, those not finished (failed included), or those waiting for the user. */
+    enum Show { ALL, OPEN, FAILED }
+
+    /** The tasks to list, newest first. */
+    List<SyncTask> tasks(Show show);
+
+    /** The unfinished work (failed included) by what it is doing now. */
+    SyncCounts counts();
 
     List<SyncLogEntry> log(long taskId);
 

@@ -58,3 +58,10 @@ data/
 
 # the app's sign-in password for the local run (never commit)
 .app-login
+
+# Docker: the secrets (docker/make-secrets.sh) and the settings (never commit)
+/secrets/
+/.env
+
+# the page's API types, generated from the OpenAPI specs (npm run generate)
+web/frontend/src/api/generated/

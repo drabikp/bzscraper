@@ -20,7 +20,8 @@ import {
 import { IconChevronDown, IconClockHour4, IconLock } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useParams, useSearchParams } from 'react-router';
+import { DatePickerInput, TimePicker } from '@mantine/dates';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { ApiError } from '../api/client';
 import {
   resolveTown,
@@ -36,7 +37,7 @@ import type { Country, EntryType, GigDraft } from '../api/types';
 import { PageHeader } from '../components/PageHeader';
 import { TownPicker } from '../components/TownPicker';
 import { usePlatformName } from '../lib/attention';
-import { hhmm } from '../lib/format';
+import { hhmm, timeFormat, timeOfDay } from '../lib/format';
 import { done, errorText, failed, queued } from '../lib/notify';
 import { useIsMobile } from '../lib/useIsMobile';
 
@@ -86,6 +87,37 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+/** A time of day in the user's format (Settings); the value stays "HH:mm". */
+function TimeField({ value, onChange, ...field }: {
+  label: string;
+  value: string | null;
+  onChange: (value: string | null) => void;
+  error?: string;
+  description?: string;
+}) {
+  return (
+    <TimePicker {...field} value={value ? hhmm(value) : ''} onChange={(v) => onChange(v || null)}
+      format={timeFormat()} minutesStep={5} withDropdown clearable />
+  );
+}
+
+/** A day, shown in the page's language ("17. 10. 2026"); the value stays "YYYY-MM-DD". */
+function DateField({ value, onChange, ...field }: {
+  label: string;
+  value: string | null;
+  onChange: (value: string | null) => void;
+  error?: string;
+  description?: string;
+  disabled?: boolean;
+  clearable?: boolean;
+}) {
+  const { i18n } = useTranslation();
+  return (
+    <DatePickerInput {...field} value={value} onChange={(v) => onChange(v || null)}
+      valueFormat={i18n.language === 'sk' ? 'D. M. YYYY' : 'D MMM YYYY'} />
+  );
+}
+
 /** New gig, an edit, or a gig from a calendar event (mode). */
 export function GigFormPage({ mode }: { mode: 'new' | 'edit' | 'calendar' }) {
   const { id, eventId } = useParams();
@@ -93,6 +125,7 @@ export function GigFormPage({ mode }: { mode: 'new' | 'edit' | 'calendar' }) {
   const { t } = useTranslation();
   const mobile = useIsMobile();
   const navigate = useNavigate();
+  const origin = (useLocation().state as { back?: string } | null)?.back;
   const name = usePlatformName();
   const platforms = usePlatforms();
   const existing = useGig(mode === 'edit' ? id : undefined);
@@ -128,7 +161,7 @@ export function GigFormPage({ mode }: { mode: 'new' | 'edit' | 'calendar' }) {
       const r = row.draft;
       const d: GigDraft = { ...EMPTY, title: r.title, date: r.date, time: r.showTime ? hhmm(r.showTime) : null,
         venue: r.venue ?? '', city: r.city ?? '', country: r.country ?? 'SLOVAKIA', street: r.street, postalCode: r.postalCode };
-      if (!r.showTime && r.eventStart) setStartHint(t('form.eventStartHint', { time: hhmm(r.eventStart) }));
+      if (!r.showTime && r.eventStart) setStartHint(t('form.eventStartHint', { time: timeOfDay(r.eventStart) }));
       setDraft(d);
       if (r.city) {
         resolveTown(r.city, r.country, r.postalCode).then((town) => {
@@ -164,6 +197,8 @@ export function GigFormPage({ mode }: { mode: 'new' | 'edit' | 'calendar' }) {
   };
 
   const back = mode === 'edit' ? `/gig/${id}` : mode === 'calendar' ? '/calendar' : '/';
+  // opened from a view (the calendar's filter, the Inbox): back to it as it was
+  const leave = () => (origin ? navigate(-1) : navigate(back, { replace: true }));
   const title = mode === 'edit' ? t('form.editTitle') : mode === 'calendar' ? t('form.fromCalendarTitle') : t('form.newTitle');
   const saving = add.isPending || edit.isPending || addFromCalendar.isPending;
 
@@ -203,7 +238,7 @@ export function GigFormPage({ mode }: { mode: 'new' | 'edit' | 'calendar' }) {
       edit.mutate({ id: existing.data.gig.id, rev: existing.data.gig.rev, gig: send }, {
         onSuccess: (r) => {
           queued(t, t('toast.saved'), r.queued, name);
-          if (fromEvent) calendarAction.mutate({ path: `events/${encodeURIComponent(fromEvent)}/seen` });
+          if (fromEvent) calendarAction.mutate({ kind: 'seen', event: fromEvent });
           navigate(`/gig/${r.gig.id}`, { replace: true });
         },
         onError,
@@ -212,7 +247,7 @@ export function GigFormPage({ mode }: { mode: 'new' | 'edit' | 'calendar' }) {
       addFromCalendar.mutate({ eventId, gig: send }, {
         onSuccess: () => {
           done(t('toast.addedFromCalendar'));
-          navigate('/calendar', { replace: true });
+          leave();
         },
         onError,
       });
@@ -226,7 +261,7 @@ export function GigFormPage({ mode }: { mode: 'new' | 'edit' | 'calendar' }) {
 
   return (
     <Box maw={760}>
-      <PageHeader title={title} back={back} />
+      <PageHeader title={title} back={origin ? leave : back} />
       {mode === 'calendar' && (
         <Alert color="brand" variant="light" mb="md">
           {t('form.fromCalendarHint')}
@@ -249,16 +284,15 @@ export function GigFormPage({ mode }: { mode: 'new' | 'edit' | 'calendar' }) {
             <TextInput label={t('form.title')} placeholder={t('form.titlePlaceholder')} value={draft.title}
               onChange={(e) => set({ title: e.currentTarget.value })} error={err('title')} />
             <Group grow align="flex-start">
-              <TextInput type="date" label={t('form.date')} value={draft.date ?? ''} error={err('date')}
-                onChange={(e) => set({ date: e.currentTarget.value || null })} />
-              <TextInput type="time" label={t('form.time')} value={draft.time ?? ''} error={err('time')}
-                description={startHint ?? undefined} onChange={(e) => set({ time: e.currentTarget.value || null })} />
+              <DateField label={t('form.date')} value={draft.date} error={err('date')} onChange={(date) => set({ date })} />
+              <TimeField label={t('form.time')} value={draft.time} error={err('time')}
+                description={startHint ?? undefined} onChange={(time) => set({ time })} />
             </Group>
             <Group grow align="flex-start">
-              <TextInput type="time" label={t('form.endTime')} description={t('form.optional')} value={draft.endTime ?? ''}
-                onChange={(e) => set({ endTime: e.currentTarget.value || null })} />
-              <TextInput type="date" label={t('form.endDate')} description={t('form.endDateHelp')} value={draft.endDate ?? ''}
-                disabled={!draft.endTime} onChange={(e) => set({ endDate: e.currentTarget.value || null })} />
+              <TimeField label={t('form.endTime')} description={t('form.optional')} value={draft.endTime}
+                onChange={(endTime) => set({ endTime })} />
+              <DateField label={t('form.endDate')} description={t('form.endDateHelp')} value={draft.endDate} clearable
+                disabled={!draft.endTime} onChange={(endDate) => set({ endDate })} />
             </Group>
             <UnstyledButton onClick={() => setSlotOpen(!slotOpen)} aria-expanded={slotOpen}
               style={{ border: '1px dashed var(--mantine-color-default-border)', borderRadius: 12, padding: '12px 14px' }}>
@@ -270,12 +304,11 @@ export function GigFormPage({ mode }: { mode: 'new' | 'edit' | 'calendar' }) {
             <Collapse in={slotOpen}>
               <Stack gap="xs">
                 <Group grow align="flex-start">
-                  <TextInput type="date" label={t('form.slotDate')} value={draft.slotDate ?? ''} error={problems.includes('slot') ? t('form.slotBoth') : undefined}
-                    onChange={(e) => set({ slotDate: e.currentTarget.value || null })} />
-                  <TextInput type="time" label={t('form.slotTime')} value={draft.slotTime ?? ''}
-                    onChange={(e) => set({ slotTime: e.currentTarget.value || null })} />
-                  <TextInput type="time" label={t('form.slotEndTime')} value={draft.slotEndTime ?? ''}
-                    onChange={(e) => set({ slotEndTime: e.currentTarget.value || null })} />
+                  <DateField label={t('form.slotDate')} value={draft.slotDate} clearable
+                    error={problems.includes('slot') ? t('form.slotBoth') : undefined} onChange={(slotDate) => set({ slotDate })} />
+                  <TimeField label={t('form.slotTime')} value={draft.slotTime} onChange={(slotTime) => set({ slotTime })} />
+                  <TimeField label={t('form.slotEndTime')} value={draft.slotEndTime}
+                    onChange={(slotEndTime) => set({ slotEndTime })} />
                 </Group>
                 <Text size="sm" c="dimmed">{slotHelp}</Text>
               </Stack>
@@ -380,7 +413,7 @@ export function GigFormPage({ mode }: { mode: 'new' | 'edit' | 'calendar' }) {
             py={mobile ? 'sm' : 0}
             style={mobile ? { background: 'var(--mantine-color-body)', borderTop: '1px solid var(--mantine-color-default-border)', zIndex: 10 } : undefined}
           >
-            <Button variant="default" size="md" onClick={() => navigate(back)}>
+            <Button variant="default" size="md" onClick={() => (origin ? leave() : navigate(back))}>
               {t('common.cancel')}
             </Button>
             <Button type="submit" size="md" loading={saving} style={mobile ? { flex: 1 } : undefined}>

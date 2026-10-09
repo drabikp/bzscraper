@@ -1,15 +1,21 @@
 package sk.drabikp.bzscraper;
 
+import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
+import com.tngtech.archunit.lang.ArchCondition;
 import com.tngtech.archunit.lang.ArchRule;
 import com.tngtech.archunit.lang.CompositeArchRule;
+import com.tngtech.archunit.lang.ConditionEvents;
+import com.tngtech.archunit.lang.SimpleConditionEvent;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.stream.Stream;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.methods;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
@@ -129,4 +135,34 @@ class ArchitectureTest {
     @ArchTest
     static final ArchRule packages_have_no_cycles = slices()
             .matching(ROOT + "(**)").should().beFreeOfCycles();
+
+    /**
+     * The API is written as OpenAPI specs (src/main/openapi); each controller implements the
+     * interface its module generates from its spec — so what it serves is what the spec says. The
+     * live updates' stream is the one exception: a generated interface can't declare it.
+     */
+    @ArchTest
+    static final ArchRule every_controller_serves_its_spec = classes()
+            .that().areAnnotatedWith(RestController.class)
+            .and().doNotHaveFullyQualifiedName(ROOT + "live.LiveController")
+            .should(implementAGeneratedApi())
+            .andShould().haveSimpleNameEndingWith("Controller");
+
+    /** A controller only serves requests: what it needs done is in the use cases, mappings and views. */
+    @ArchTest
+    static final ArchRule controllers_have_no_private_methods = methods()
+            .that().areDeclaredInClassesThat().areAnnotatedWith(RestController.class)
+            .should().notBePrivate();
+
+    private static ArchCondition<JavaClass> implementAGeneratedApi() {
+        return new ArchCondition<>("implement an API interface generated from its spec (an ..api package)") {
+            @Override
+            public void check(JavaClass controller, ConditionEvents events) {
+                boolean generated = controller.getRawInterfaces().stream()
+                        .anyMatch(i -> i.getPackageName().endsWith(".api") && i.getSimpleName().endsWith("Api"));
+                events.add(new SimpleConditionEvent(controller, generated,
+                        controller.getName() + (generated ? " implements" : " doesn't implement") + " a generated API"));
+            }
+        };
+    }
 }

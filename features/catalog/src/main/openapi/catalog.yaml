@@ -1,0 +1,379 @@
+openapi: 3.0.3
+info:
+  title: bzscraper — catalog
+  version: "1"
+  description: |
+    The band's gigs (the source of truth) with their state on every platform: adding, editing,
+    cancelling and deleting them — the platforms follow through the sync — publishing and
+    re-syncing; what the pages need to know of the platforms; the per-platform file downloads.
+    A gig is addressed by its token; an edit names the revision it was made on, so a gig
+    changed meanwhile is not overwritten.
+servers:
+  - url: /
+tags:
+  - name: Gigs
+  - name: Platforms
+  - name: Exports
+paths:
+  /api/gigs:
+    get:
+      tags: [Gigs]
+      operationId: listGigs
+      responses:
+        "200":
+          description: All gigs, earliest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Gig'
+    post:
+      tags: [Gigs]
+      operationId: addGig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/schemas/GigDraft'
+      responses:
+        "201":
+          description: Added (on no platform yet).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Gig'
+        "409":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/Refused'
+  /api/gigs/{id}:
+    parameters:
+      - $ref: '#/components/parameters/GigToken'
+    get:
+      tags: [Gigs]
+      operationId: gigDetail
+      responses:
+        "200":
+          description: The gig and its sync history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GigDetail'
+        "404":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/NotFound'
+    put:
+      tags: [Gigs]
+      operationId: editGig
+      summary: Changes the gig as it was at `rev`; queues the update everywhere it is published.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GigEdit'
+      responses:
+        "200":
+          description: Changed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GigEdited'
+        "404":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/NotFound'
+        "409":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/Refused'
+    delete:
+      tags: [Gigs]
+      operationId: deleteGig
+      summary: Deletes the gig and queues its removal from every platform.
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueResult'
+        "404":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/NotFound'
+        "409":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/Refused'
+  /api/gigs/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/GigToken'
+    post:
+      tags: [Gigs]
+      operationId: cancelGig
+      responses:
+        "200":
+          description: Cancelled (nothing when it already was).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueResult'
+        "404":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/NotFound'
+        "409":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/Refused'
+  /api/gigs/{id}/reactivate:
+    parameters:
+      - $ref: '#/components/parameters/GigToken'
+    post:
+      tags: [Gigs]
+      operationId: reactivateGig
+      responses:
+        "200":
+          description: On again (nothing when it wasn't cancelled).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueResult'
+        "404":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/NotFound'
+        "409":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/Refused'
+  /api/gigs/publish:
+    post:
+      tags: [Gigs]
+      operationId: publishGigs
+      summary: Queues the gigs' creation on the platforms they are not on yet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Selection'
+      responses:
+        "200":
+          description: Queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueResult'
+        "400":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/BadRequest'
+        "404":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/NotFound'
+  /api/gigs/resync:
+    post:
+      tags: [Gigs]
+      operationId: resyncGigs
+      summary: Queues an update of the gigs everywhere they are published.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Selection'
+      responses:
+        "200":
+          description: Queued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueResult'
+        "404":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/NotFound'
+        "409":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/Refused'
+  /api/platforms:
+    get:
+      tags: [Platforms]
+      operationId: listPlatforms
+      responses:
+        "200":
+          description: The platforms, in import-precedence order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Platform'
+  /api/exports/{platform}:
+    get:
+      tags: [Exports]
+      operationId: exportGigs
+      summary: The platform's file of all gigs (e.g. a bulk-upload CSV), as a download.
+      parameters:
+        - name: platform
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The file (its name in Content-Disposition).
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/responses/BadRequest'
+components:
+  parameters:
+    GigToken:
+      name: id
+      in: path
+      required: true
+      description: The gig's token.
+      schema:
+        type: string
+  schemas:
+    Gig:
+      description: A gig as the pages get it — its form fields and, per platform, whether it is there and what the sync is doing.
+      type: object
+      required: [id, rev, past, gig, platforms]
+      properties:
+        id:
+          description: The gig's token (its address).
+          type: string
+        rev:
+          description: The gig's revision; an edit names it.
+          type: string
+        past:
+          type: boolean
+        gig:
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/schemas/GigDraft'
+        platforms:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlatformState'
+    PlatformStateName:
+      description: |
+        live — published, nothing to do; none — not there; queued; running; retrying — failed,
+        tried again at nextAttemptAt; failed — waits for the user.
+      type: string
+      enum: [live, none, queued, running, retrying, failed]
+    PlatformState:
+      type: object
+      required: [platform, state, ref, url, taskId, action, attempts, nextAttemptAt, message]
+      properties:
+        platform:
+          type: string
+        state:
+          $ref: '#/components/schemas/PlatformStateName'
+        ref:
+          description: The platform's id of the event.
+          type: string
+          nullable: true
+        url:
+          type: string
+          nullable: true
+        taskId:
+          type: integer
+          format: int64
+          nullable: true
+        action:
+          allOf:
+            - $ref: '../../../../sync/src/main/openapi/sync.yaml#/components/schemas/SyncAction'
+          nullable: true
+        attempts:
+          type: integer
+        nextAttemptAt:
+          type: string
+          format: date-time
+          nullable: true
+        message:
+          type: string
+          nullable: true
+    GigHistory:
+      type: object
+      required: [taskId, platform, action, status, at, message]
+      properties:
+        taskId:
+          type: integer
+          format: int64
+        platform:
+          type: string
+        action:
+          $ref: '../../../../sync/src/main/openapi/sync.yaml#/components/schemas/SyncAction'
+        status:
+          $ref: '../../../../sync/src/main/openapi/sync.yaml#/components/schemas/SyncTaskStatus'
+        at:
+          type: string
+          format: date-time
+        message:
+          type: string
+          nullable: true
+    GigDetail:
+      type: object
+      required: [gig, history]
+      properties:
+        gig:
+          $ref: '#/components/schemas/Gig'
+        history:
+          type: array
+          items:
+            $ref: '#/components/schemas/GigHistory'
+    GigEdit:
+      type: object
+      required: [rev, gig]
+      properties:
+        rev:
+          description: The revision the edit was made on (Gig.rev).
+          type: string
+        gig:
+          $ref: '../../../../gig/src/main/openapi/gig.yaml#/components/schemas/GigDraft'
+    GigEdited:
+      type: object
+      required: [gig, queued]
+      properties:
+        gig:
+          $ref: '#/components/schemas/Gig'
+        queued:
+          $ref: '#/components/schemas/QueueResult'
+    Selection:
+      type: object
+      required: [gigs]
+      properties:
+        gigs:
+          description: The gigs' tokens.
+          type: array
+          items:
+            type: string
+        platforms:
+          description: Where to publish (publish only).
+          type: array
+          items:
+            type: string
+    QueuedTask:
+      type: object
+      required: [taskId, platform, action]
+      properties:
+        taskId:
+          type: integer
+          format: int64
+        platform:
+          type: string
+        action:
+          $ref: '../../../../sync/src/main/openapi/sync.yaml#/components/schemas/SyncAction'
+    QueueResult:
+      description: What a change put in the sync outbox, and what it left out (with why, in English).
+      type: object
+      required: [queued, notQueued]
+      properties:
+        queued:
+          type: array
+          items:
+            $ref: '#/components/schemas/QueuedTask'
+        notQueued:
+          type: array
+          items:
+            type: string
+    Platform:
+      description: A platform as its module describes it; `exportable` — a file download exists.
+      type: object
+      required: [id, name, keepsCancelledEvents, listsBandSlot, carriesAdmission, exportable]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        keepsCancelledEvents:
+          type: boolean
+        listsBandSlot:
+          type: boolean
+        carriesAdmission:
+          type: boolean
+        exportable:
+          type: boolean

@@ -63,5 +63,30 @@
 			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<!-- the tests' database: PostgreSQL in Docker (jdbc:tc: URL) -->
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-postgresql</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
+	<build>
+		<plugins>
+			<plugin>
+				<!-- the API this module serves: src/main/openapi/calendar.yaml → sk.drabikp.bzscraper.calendar.adapter.in.rest.api -->
+				<groupId>org.openapitools</groupId>
+				<artifactId>openapi-generator-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>api</id>
+						<configuration>
+							<inputSpec>${project.basedir}/src/main/openapi/calendar.yaml</inputSpec>
+							<apiPackage>sk.drabikp.bzscraper.calendar.adapter.in.rest.api</apiPackage>
+							<modelPackage>sk.drabikp.bzscraper.calendar.adapter.in.rest.api</modelPackage>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
 </project>

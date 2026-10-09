@@ -1,9 +1,10 @@
 import { Avatar, Badge, Button, Group, Paper, SegmentedControl, Stack, Switch, Text, Title, useMantineColorScheme } from '@mantine/core';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLogout, useMe, usePlatforms, useSyncAction, useSyncStatus } from '../api/hooks';
 import { PageHeader } from '../components/PageHeader';
 import { LANGUAGES, setLanguage } from '../i18n';
-import { clock } from '../lib/format';
+import { clock, setTimeFormat, timeFormat, type TimeFormat } from '../lib/format';
 import { failed } from '../lib/notify';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -24,11 +25,17 @@ export function SettingsPage() {
   const status = useSyncStatus();
   const sync = useSyncAction();
   const paused = status.data?.paused ?? false;
+  const [time, setTime] = useState(timeFormat());
   return (
     <Stack gap="md" maw={720}>
       <PageHeader title={t('settings.title')} phoneBack="/more" />
       <Section title={t('settings.language')}>
         <SegmentedControl fullWidth value={i18n.language} onChange={setLanguage} data={LANGUAGES.map((l) => ({ value: l.code, label: l.name }))} />
+      </Section>
+      <Section title={t('settings.timeFormat')}>
+        <SegmentedControl fullWidth value={time}
+          onChange={(v) => { setTimeFormat(v as TimeFormat); setTime(v as TimeFormat); }}
+          data={[{ value: '24h', label: t('settings.time24') }, { value: '12h', label: t('settings.time12') }]} />
       </Section>
       <Section title={t('settings.appearance')}>
         <SegmentedControl fullWidth value={colorScheme} onChange={(v) => setColorScheme(v as 'light' | 'dark' | 'auto')}
@@ -48,7 +55,7 @@ export function SettingsPage() {
               {breaker && (
                 <Group justify="space-between" wrap="wrap" gap="xs">
                   <Text size="sm" c="orange.9">{t('inbox.heldBody', { failures: breaker.failures, time: clock(breaker.heldUntil), last: breaker.lastFailure ?? '' })}</Text>
-                  <Button size="xs" onClick={() => sync.mutate({ path: `breakers/${p.id}/resume` }, { onError: failed })}>{t('inbox.resume')}</Button>
+                  <Button size="xs" onClick={() => sync.mutate({ kind: 'resumePlatform', platform: p.id }, { onError: failed })}>{t('inbox.resume')}</Button>
                 </Group>
               )}
             </Stack>
@@ -57,7 +64,7 @@ export function SettingsPage() {
       </Section>
       <Section title={t('settings.sync')}>
         <Switch size="md" checked={paused} label={t('activity.pause')} description={t('activity.pauseHelp')}
-          onChange={() => sync.mutate({ path: paused ? 'resume' : 'pause' }, { onError: failed })} />
+          onChange={() => sync.mutate({ kind: paused ? 'resume' : 'pause' }, { onError: failed })} />
       </Section>
       <Section title={t('settings.account')}>
         <Group justify="space-between" wrap="wrap">

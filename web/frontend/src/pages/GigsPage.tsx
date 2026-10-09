@@ -28,7 +28,7 @@ import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
 import { StatusChip } from '../components/StatusChip';
 import { usePlatformName } from '../lib/attention';
-import { fold, hhmm, shortDate } from '../lib/format';
+import { fold, shortDate, timeOfDay } from '../lib/format';
 import { failed, queued } from '../lib/notify';
 import { useIsMobile } from '../lib/useIsMobile';
 
@@ -175,7 +175,7 @@ export function GigsPage() {
                       {g.gig.cancelled && <Badge color="gray" variant="light" style={{ flexShrink: 0 }}>{t('gig.cancelled')}</Badge>}
                     </Group>
                     <Text size="sm" c="dimmed" truncate>
-                      {hhmm(g.gig.time)} · {place(t, g)}
+                      {timeOfDay(g.gig.time)} · {place(t, g)}
                     </Text>
                     <Group gap={6} mt={4}>
                       {g.platforms.map((p) => (
@@ -254,7 +254,7 @@ export function GigsPage() {
                       </Table.Td>
                       <Table.Td style={{ whiteSpace: 'nowrap' }}>
                         <Text fw={700}>{shortDate(g.gig.date!)}</Text>
-                        <Text size="sm" c="dimmed">{hhmm(g.gig.time)}</Text>
+                        <Text size="sm" c="dimmed">{timeOfDay(g.gig.time)}</Text>
                       </Table.Td>
                       <Table.Td>
                         <Group gap={8} wrap="nowrap">

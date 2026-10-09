@@ -12,6 +12,7 @@ import sk.drabikp.bzscraper.calendar.application.port.out.CalendarSnapshotStore;
 import sk.drabikp.bzscraper.calendar.domain.rules.BandProfile;
 import sk.drabikp.bzscraper.catalog.application.port.in.GigWrites;
 import sk.drabikp.bzscraper.gig.application.port.out.GigRepository;
+import sk.drabikp.bzscraper.gig.application.port.out.LiveUpdates;
 import sk.drabikp.bzscraper.gig.application.port.out.Transactions;
 
 import java.time.Clock;
@@ -23,10 +24,11 @@ class CalendarConfiguration {
     CalendarReviewService calendarReviewService(
             CalendarFeed feed, BandProfileStore profileStore, CalendarDecisionStore decisionStore,
             CalendarSnapshotStore snapshotStore, CalendarLinkStore linkStore, GigRepository gigRepository,
-            Transactions transactions, Clock clock, GigWrites catalogWrites, CalendarProperties calendar) {
+            Transactions transactions, Clock clock, GigWrites catalogWrites, CalendarProperties calendar,
+            LiveUpdates live) {
         return new CalendarReviewService(feed, profileStore, decisionStore, snapshotStore, linkStore, gigRepository,
                 transactions, clock, new BandProfile.Thresholds(calendar.gigScore(), calendar.notGigScore(),
-                        calendar.strongNegative()), catalogWrites);
+                        calendar.strongNegative()), catalogWrites, live);
     }
 
     /** A calendar event's link follows its gig when an edit moves the gig's identity. */

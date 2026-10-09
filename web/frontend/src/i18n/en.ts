@@ -105,6 +105,7 @@ export const en = {
     notConfigured: 'No calendar connected', notConfiguredText: 'Set bzscraper.calendar.ical-url to the calendar’s private iCal address.',
     allGood: 'Nothing needs a look.', none: 'No events here.', summary: '{{events}} events, {{gigs}} of them gigs.',
     linkSameDay_one: 'Link {{count}} event to the gig that day', linkSameDay_other: 'Link {{count}} events to the gig that day',
+    linkSameDayTitle: 'Link to the gig that day', linkSameDayText: 'Each of these calendar events will be linked to the only gig in your list that day:', linkThem: 'Link them',
     allSeen: 'Mark all changes seen', allDay: 'all day', byYou: 'by you', linked: 'Linked: {{title}}', why: 'Why? (score {{score}})',
     updateGig: 'Update gig', cancelGig: 'Cancel gig', deleteGig: 'Delete gig', keepGig: 'Keep gig', addGig: 'Add gig',
     linkTo: 'It’s “{{title}}”', itsAGig: 'It’s a gig', notAGig: 'Not a gig', undo: 'Undo my answer', unlink: 'Unlink', seen: 'Seen',
@@ -172,6 +173,7 @@ export const en = {
     title: 'Settings', language: 'Language', appearance: 'Appearance', auto: 'As the device', light: 'Light', dark: 'Dark',
     platforms: 'Platforms', working: 'Working', heldBack: 'Paused', sync: 'Sync', account: 'Account',
     signedInAs: 'Signed in as {{name}}', signOut: 'Sign out',
+    timeFormat: 'Time format', time24: '24-hour (20:30)', time12: '12-hour (8:30 PM)',
   },
   more: {
     installTitle: 'Put Gig sync hub on your home screen', installText: 'Open it with one tap, full screen, like an app.',

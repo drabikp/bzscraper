@@ -5,9 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Run
 
 ```bash
+docker compose up -d --build                           # Run everything: PostgreSQL, the app (127.0.0.1:8080), daily backups
+docker compose --profile proxy up -d --build           # Online: + Caddy, HTTPS for BZ_DOMAIN (.env) on 80/443
+docker compose logs -f app                             # The app's log
 ./mvnw clean install                                   # Build every module (incl. the page: Node is fetched once into web/frontend/node)
-./mvnw -pl app -am spring-boot:run                     # Run (port 8080; working dir = repo root)
-./mvnw test                                            # Run all tests (Java + the page's Vitest tests)
+docker compose up -d db && SPRING_DATASOURCE_PASSWORD=$(cat secrets/db_password) \
+  ./mvnw -pl app -am spring-boot:run                   # Run outside Docker (port 8080; working dir = repo root; the db on localhost:5432)
+./mvnw test                                            # Run all tests (Java + the page's Vitest tests) — needs Docker (Testcontainers)
 ./mvnw test -Dtest=GigPublishingServiceTest -Dsurefire.failIfNoSpecifiedTests=false   # One class
 ./mvnw -pl platforms/bandzone -am test                 # One module (and what it needs)
 cd web/frontend && npm run dev                         # The page with hot reload on :5173 (API proxied to :8080)
@@ -15,8 +19,35 @@ cd web/frontend && npm test                            # The page's tests only
 ```
 
 Sign-in: one account, `bzscraper.auth.username` (default `admin`) / `bzscraper.auth.password`
-(plain or `{bcrypt}…`; NEVER in source — the local script reads it from the git-ignored
-`.app-login`; empty → a random one is written to the log on start).
+(plain or `{bcrypt}…`; NEVER in source — in Docker the secret `secrets/app_password`, made from the
+git-ignored `.app-login`; empty → a random one is written to the log on start).
+
+**Docker** (`Dockerfile`, `compose.yaml`): the image builds the app from the sources (Java 21 +
+Chromium + chromedriver from Debian, a non-root user whose uid/gid match the host's, `BZ_UID`/`BZ_GID`,
+default 1000); compose runs `db` (PostgreSQL 18, volume `db-data`, on `127.0.0.1:5432` for development),
+`app` and `backup` (`docker/backup.sh`: `pg_dump` on start and daily into `./data/backups`, the newest
+14 kept). **Secrets are files** under `./secrets` (git-ignored, `600`; `docker/make-secrets.sh` makes
+them from `.bz-creds`, `.bit-test-creds`, `calendar`, `.app-login` and a random database password),
+given to the app as Docker secrets at `/run/secrets/<property name>` and read by
+`spring.config.import=optional:configtree:/run/secrets/` — never environment variables. The band's
+non-secret settings (platforms on, band slug, artist name) and this machine's (`BZ_DOMAIN`,
+`BZ_APP_BIND`, `BZ_SUBNET`, `BZ_UID`/`BZ_GID`) are in the git-ignored `.env` (`.env.example`) —
+compose reads it for its own `${…}` and passes it to the app. `./data` is mounted at `/app/data` (the
+band's calendar profile, backups), the platforms' saved logins live in the volume `browser-profiles`.
+`.dockerignore` is an allowlist: only the sources reach the build. The containers' network has a
+fixed subnet (`BZ_SUBNET`, default `10.201.0.0/24`): Docker's own 172.x pick collided with a VPN's
+routes, and the published port then reset every connection. The app has its own name server
+(`BZ_DNS`, default `1.1.1.1`): Docker's DNS forwarding to a VPN's name servers timed out, so the
+platforms, the calendar and the town search couldn't be reached.
+
+**Online** (profile `proxy`): Caddy (`docker/Caddyfile`) on 80/443 gets and renews the Let's Encrypt
+certificate for `BZ_DOMAIN` itself (DNS must point at the server), redirects HTTP to HTTPS, sets HSTS,
+compresses everything but the live updates (`/api/events`, passed through unbuffered) and proxies to
+`app:8080`. The app's own port is published on `127.0.0.1` only (`BZ_APP_BIND=0.0.0.0` opens it to
+the local network). `server.forward-headers-strategy=native`: Tomcat believes `X-Forwarded-*` only
+from private addresses, so behind the proxy requests count as HTTPS and the session, remember-me and
+CSRF cookies are `Secure` (`ProxyHeadersTest`, a real server). `BZ_DOMAIN=localhost` (the default)
+tries it locally with Caddy's own certificate.
 
 **Structure: vertical slices.** One Maven module per feature, each holding its own domain,
 application (use cases + ports) and adapters (persistence, REST API, workers) in packages
@@ -29,7 +60,7 @@ features/gig        shared kernel: Gig + its value objects (GigId.key() = how re
                     gig, GigId.token() = in addresses), GigDraft (a gig as the form holds it),
                     Platform/PlatformTraits/Platforms, Publication, GigRepository/PublishedGigStore/
                     Transactions/LiveUpdates, UserFacingException (code + args), InvalidGigException,
-                    TextFold; their JPA persistence, SpringTransactions, H2 backup, the Clock; THE
+                    TextFold; their JPA persistence, SpringTransactions, the H2 import, the Clock; THE
                     schema (db/migration, Flyway); test-jar: gig.domain.TestGigs, gig.domain.platform.TestPlatforms
 features/places     Town, TownChoice, place search (Photon); /api/places
 features/sync       outbox (SyncTask…, SyncLabels), queueing (QueueSyncWork), read-only state
@@ -74,16 +105,51 @@ uses no framework, logger, adapter, config, live module or web setup; a feature 
 outside only through its domain and ports; the kernel's persistence and wiring are its own; the
 kernel knows no feature; live updates are used only through their port and the live module knows
 only the kernel; nothing uses the app's web setup; the features know no platform, nor a platform
-another; a platform's browser code stays behind its portal client; no cycles between modules nor
-between any two packages. `PlatformNamesTest`: no feature source (code, string or comment) names
-a platform.
+another; a platform's browser code stays behind its portal client; every controller implements
+the interface generated from its module's spec and has no private methods (the live stream
+excepted); no cycles between modules nor between any two packages. `PlatformNamesTest`: no
+feature source (code, string or comment — the generated code from the specs too) names a platform.
+
+## The API (OpenAPI, contract first)
+
+The API is written as **OpenAPI 3.0 specs**, one per module that serves requests, in
+`src/main/openapi/`: `features/gig/…/gig.yaml` (the shared parts: `GigDraft`, `Country`,
+`EntryType`, `Problem` and the error responses), `catalog.yaml` (gigs, platforms, exports),
+`places.yaml`, `sync.yaml`, `import.yaml`, `check.yaml`, `calendar.yaml`, `app/…/auth.yaml`
+(signing in), `platforms/bandzone/…/bandzone.yaml` (the public `/gigs/{band_slug}`) and
+`web/live/…/live.yaml` (the event stream). A spec refers to another's schemas by relative path
+(`../../../../gig/src/main/openapi/gig.yaml#/components/schemas/GigDraft`). **Change the spec
+first**; both sides are generated from it on every build:
+- **Server** (openapi-generator `spring`, configured once in the parent pom's pluginManagement;
+  each module names its spec and package): an interface per tag (`GigsApi`, `SyncApi`, …) and
+  the JSON classes (`*Json`, POJOs) in `<feature>.adapter.in.rest.api` (target/generated-sources;
+  `Instant` for date-time, Bandzone's keeps `OffsetDateTime`). The kernel generates the shared
+  schemas once into `sk.drabikp.bzscraper.gig.api` (plus `GigDraftMapping`, hand-written); the
+  other modules map them to those classes (`schemaMappings`), never generating them again.
+- **Controllers** (`*Controller`, `@RestController`, implement the generated interface) only
+  serve requests — no private methods, no logic: they call a use case and a mapping. Mapping
+  domain ↔ JSON is in `*Mapping` (static) or, where it needs the use cases, a view component
+  (`GigViews`: a gig with its publications and open sync work; `GigRevisions`: the edit's
+  revision check; `GigSummaries`: the public list). What used to sit in endpoints is in the
+  application: `ListGigsUseCase.gig` (→ `NotFoundException`, 404), `SyncLogUseCase.tasks/counts`,
+  `ImportSessionUseCase` (`ImportSession`: the background read and the plan), `StartPlatformCheckUseCase`
+  (`BackgroundCheck`), and every use case announces its own changes on the live updates.
+  Errors: `ApiErrors` (app) answers with the kernel's `ProblemJson` (409 refused, 404, 401
+  `badCredentials`, 400, 500); `CalendarErrors` 502 `calendarUnavailable`.
+- **The page**: `npm run generate` (openapi-typescript, `web/frontend/redocly.yaml` lists the specs;
+  runs before dev, build and test) → `src/api/generated/*.ts` (git-ignored); `api/types.ts` only
+  names those types; `api/client.ts` is an `openapi-fetch` client over every spec's paths, so a
+  path, parameter, body or answer that doesn't match the spec doesn't compile.
+- The live stream (`/api/events`) is the exception on the server: an `SseEmitter` can't be a
+  generated interface's return type, so `LiveController` is hand-written; the page still takes its
+  event names (`LiveTopic`) from `live.yaml`.
 
 Configuration is typed: a `@ConfigurationProperties` record per module (`<feature>.config` for
-the features: `CalendarProperties`, `SyncProperties`, `CheckProperties`, `BackupProperties`,
+the features: `CalendarProperties`, `SyncProperties`, `CheckProperties`,
 `PlacesProperties`; the platform's root package for `BandzoneProperties`,
 `BandsintownProperties`, `BrowserProperties`; `AuthProperties` in the app; secrets are hidden in
 their `toString`); a platform switched on without its login stops the app at start.
-`spring-boot:run` runs in the repo root (`./data`, `./calendar` are relative to it).
+`spring-boot:run` runs in the repo root (`./data` is relative to it; in Docker `/app/data`).
 Spring tests: `app` (whole context) and each module with persistence (`gig`, `sync`, `calendar`:
 its own `<Feature>PersistenceTestApplication` over its persistence package). These are marked
 `@TestComponent`: a module that uses another's test-jar gets, in a reactor build (`./mvnw test`),
@@ -105,7 +171,9 @@ Built from a regular user's view, phone first, installable (PWA):
   check, Settings (language, light/dark, platforms, sign out).
 - Phone: a bottom bar (Gigs · Inbox · Calendar · More), sheets slide up from the bottom, toasts
   at the top; desktop: the menu on the left, dialogs centred.
-- **Data**: TanStack Query per API resource (`api/hooks.ts`); every change reads the affected
+- **Data**: TanStack Query per API resource (`api/hooks.ts`), every call typed by the specs (see
+  **The API**); what the user tells the sync, the calendar and the check are typed commands
+  (`SyncCommand`, `CalendarCommand`, `CheckCommand`); every change reads the affected
   parts again; **live updates**: one `EventSource` on `/api/events` (`api/live.ts`) — an event
   names what changed (`gigs`, `sync`, `check`, `import`, `calendar`) and that part is read again;
   after the phone woke the app up, everything is.
@@ -121,7 +189,7 @@ Built from a regular user's view, phone first, installable (PWA):
 ## What This Project Does
 
 A personal Spring Boot tool for a single band's gig admin — a **gig sync hub**. Gigs
-are kept in a local catalog (H2 file DB, the source of truth), can be imported from
+are kept in a local catalog (PostgreSQL, the source of truth), can be imported from
 Bandzone.cz, and are **published to listing platforms** (Bandzone, Bandsintown). Edits,
 cancel, reactivate and delete in the catalog are propagated to every platform the gig
 was published to. A React page (phone-first, installable) drives it over a REST API; a per-platform file download (`GigExporter`, the
@@ -414,23 +482,32 @@ bzscraper.bandsintown.pacing.min-ms / .max-ms             # human pauses between
 
 ## Database
 
-H2 file DB at `./data/bzscraper-gigs` (`bzscraper.db.path`). The schema is owned by
-**Flyway** (`features/gig/src/main/resources/db/migration/V<n>__*.sql` — one schema history for
-all features, in the kernel — the history can't be split per feature, as V11 changes both the
-kernel's `published_gig` and the sync's `sync_task`, and an applied migration is never rewritten);
-Hibernate runs with
-`ddl-auto=validate`, so every entity change needs a new migration (tests run the
-migrations on an in-memory H2 and fail on a mismatch). A pre-Flyway database is
-baselined at V1. V3 re-keys venue-less gigs (and their publications) to the `@city` identity; V4 adds the band-calendar tables (`calendar_rule`, `calendar_decision`); V5 the sync outbox (`sync_task`, `sync_log`); V6 the saved calendar copy and event → gig links (`calendar_event`, `calendar_link`); V7 the band's slot (`gig.slot_start/slot_end`); V8 a workflow run's step (`sync_task.step`); V9 the gig's address (`gig.street/postal_code/district/region/latitude/longitude`); V10 the gig's optimistic-lock version (`gig.version`); V11 platform ids as text (`published_gig.platform` was an H2 enum — platforms come from adapters now); V12 the sync task's version and `app_setting`. H2's `AUTO_SERVER` (a second process on the same file) is opt-in: `bzscraper.db.options=;AUTO_SERVER=TRUE`. The H2 version is pinned in `pom.xml` (`h2.version`) because its file
-format changes between versions. `H2ScriptBackup` writes a plain-SQL `SCRIPT` backup on
-every start to `./data/backups` (one per day, newest 14 kept); restore with
-`org.h2.tools.RunScript`.
+PostgreSQL 18 (`spring.datasource.*`; in Docker the `db` service, user and database
+`bzscraper`, the password a secret). The schema is owned by **Flyway**
+(`features/gig/src/main/resources/db/migration/V<n>__*.sql` — one schema history for all features,
+in the kernel; an applied migration is never rewritten); Hibernate runs with `ddl-auto=validate`, so
+every entity change needs a new migration (the tests run the migrations on a real PostgreSQL and fail
+on a mismatch). `V1__schema.sql` is the whole schema as the app had it on H2 (V1–V12 there, squashed
+for the new database in 2026-10): `gig` (+ the band's slot, the address, `version` for optimistic
+locking), `published_gig`, `sync_task` (+ `step`, `version`) / `sync_log`, `app_setting`,
+`calendar_rule`, `calendar_decision`, `calendar_event`, `calendar_link`.
+
+**From H2** (the database until 2026-10): `H2Import` (a Flyway `afterMigrate` callback in the kernel)
+copies an H2 SQL backup (`SCRIPT TO`, `bzscraper.db.import-h2`) into an EMPTY database right after
+the schema is built — every table's rows (the columns both have), times without zone shifts, the
+id counters moved past the copied ids; one transaction, so a failure leaves nothing and stops the
+start; skipped when the database has data. H2 stays a dependency only for this (`h2.version` pinned).
+
+**Backups**: the compose service `backup` (`pg_dump --format=custom`, daily, `./data/backups`, 14
+kept); restore into an empty database with `pg_restore -d bzscraper --no-owner <file>`.
 
 ## Key Dependencies
 
-- Spring Boot 4.0.3, Java 21; Spring Data JPA + H2 2.4.240 (pinned) + Flyway
+- Spring Boot 4.0.3, Java 21; Spring Data JPA + PostgreSQL 18 + Flyway (H2 2.4.240 only for the import)
+- Docker: Debian trixie (Chromium + chromedriver) + the Temurin 21 JRE; Testcontainers 2 for the tests
+- OpenAPI: openapi-generator 7.26 (`spring`, Spring Boot 4 + Jackson 3); openapi-typescript 7 + openapi-fetch
 - The page: React 19 + TypeScript, Vite 6, Mantine 8, TanStack Query 5, React Router 7, i18next,
-  vite-plugin-pwa; built by Maven (frontend-maven-plugin, Node 22 fetched into web/frontend/node)
+  vite-plugin-pwa, Mantine dates (+ dayjs); built by Maven (frontend-maven-plugin, Node 22 fetched into web/frontend/node)
 - JSoup 1.22.1 (HTML scraping)
 - OpenCSV 5.12.0 (CSV)
 - Selenium 4.27.0 (Bandzone + Bandsintown) — needs a Chromium + chromedriver runtime
@@ -449,7 +526,9 @@ mutable clock, builders for the registry, engine, dispatcher and requests) and `
 (two made-up platforms' traits — the core tests never need the real adapters). The fake
 outbox and `JpaSyncOutbox` both pass `SyncOutboxContract` (sync test-jar), so the
 fake can't drift from the real one. `bzscraper.sync.worker.enabled=false` in Spring tests
-(tasks queue, never run). Persistence tests run the migrations on an in-memory H2
+(tasks queue, never run). Persistence tests run the migrations on PostgreSQL in Docker (Testcontainers'
+`jdbc:tc:postgresql:18-alpine` URL in each module's test `application.properties`, one container per
+test run — `./mvnw test` needs Docker; `H2ImportTest`: an H2 backup into its own empty database)
 (`JpaGigConcurrencyTest`: the optimistic lock across real transactions).
 
 **Page objects against copies of the platforms' pages** (headless Chromium from

@@ -9,7 +9,11 @@ import sk.drabikp.bzscraper.places.domain.TownChoice;
 import java.util.List;
 import java.util.Optional;
 
-/** Town suggestions from the {@link PlaceSearch}; resolving an address picks with {@link TownChoice}. */
+/**
+ * Town suggestions from the {@link PlaceSearch}; resolving an address picks with {@link TownChoice}.
+ * Only towns the search knows fully (district and coordinates: {@link Town#resolved()}) — what
+ * tells same-named towns apart for the platforms.
+ */
 public class PlaceService implements FindPlacesUseCase {
 
     private final PlaceSearch placeSearch;
@@ -20,7 +24,7 @@ public class PlaceService implements FindPlacesUseCase {
 
     @Override
     public List<Town> search(String text) {
-        return placeSearch.towns(text);
+        return placeSearch.towns(text).stream().filter(Town::resolved).toList();
     }
 
     @Override
@@ -28,6 +32,6 @@ public class PlaceService implements FindPlacesUseCase {
         if (name == null || name.isBlank()) {
             return Optional.empty();
         }
-        return TownChoice.pick(name, country, null, postalCode, placeSearch.towns(name));
+        return TownChoice.pick(name, country, null, postalCode, placeSearch.towns(name)).filter(Town::resolved);
     }
 }

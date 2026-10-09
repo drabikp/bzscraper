@@ -50,4 +50,23 @@
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
+	<build>
+		<plugins>
+			<plugin>
+				<!-- the API this module serves: src/main/openapi/check.yaml → sk.drabikp.bzscraper.check.adapter.in.rest.api -->
+				<groupId>org.openapitools</groupId>
+				<artifactId>openapi-generator-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>api</id>
+						<configuration>
+							<inputSpec>${project.basedir}/src/main/openapi/check.yaml</inputSpec>
+							<apiPackage>sk.drabikp.bzscraper.check.adapter.in.rest.api</apiPackage>
+							<modelPackage>sk.drabikp.bzscraper.check.adapter.in.rest.api</modelPackage>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
 </project>

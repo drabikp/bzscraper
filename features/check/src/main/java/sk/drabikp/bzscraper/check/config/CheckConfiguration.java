@@ -2,6 +2,8 @@ package sk.drabikp.bzscraper.check.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.task.TaskExecutor;
+import sk.drabikp.bzscraper.check.application.BackgroundCheck;
 import sk.drabikp.bzscraper.check.application.PlatformCheckService;
 import sk.drabikp.bzscraper.gig.application.port.out.GigRepository;
 import sk.drabikp.bzscraper.gig.application.port.out.LiveUpdates;
@@ -25,5 +27,11 @@ class CheckConfiguration {
                                               CheckProperties check, LiveUpdates live) {
         return new PlatformCheckService(importers, gigRepository, publishedGigStore, syncState, transactions,
                 platforms, clock, check.pastDays(), live);
+    }
+
+    /** A check the user starts runs on Spring's task executor. */
+    @Bean
+    BackgroundCheck backgroundCheck(PlatformCheckService platformCheckService, TaskExecutor executor) {
+        return new BackgroundCheck(platformCheckService, executor);
     }
 }

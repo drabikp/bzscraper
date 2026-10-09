@@ -1,276 +1,74 @@
-/** The API's shapes (see the *Endpoint classes of each feature's adapter.in.rest). */
+/**
+ * The API's shapes under the names the pages use — all generated from the OpenAPI specs
+ * (src/api/generated; each module's src/main/openapi/*.yaml). Nothing here is written by hand.
+ */
+import type { components as AuthApi } from './generated/auth';
+import type { components as CalendarApi } from './generated/calendar';
+import type { components as CatalogApi } from './generated/catalog';
+import type { components as CheckApi } from './generated/check';
+import type { components as GigApi } from './generated/gig';
+import type { components as ImportApi } from './generated/import';
+import type { components as LiveApi } from './generated/live';
+import type { components as PlacesApi } from './generated/places';
+import type { components as SyncApi } from './generated/sync';
 
-export type Country = 'CZECHIA' | 'SLOVAKIA';
-export type EntryType = 'FREE' | 'VOLUNTARY' | 'PAID';
+type Shared = GigApi['schemas'];
+type Catalog = CatalogApi['schemas'];
+type Sync = SyncApi['schemas'];
+type Calendar = CalendarApi['schemas'];
+type Check = CheckApi['schemas'];
+type Import = ImportApi['schemas'];
 
-/** A gig as the form holds it (the kernel's GigDraft). Times are "HH:mm" (or "HH:mm:ss"). */
-export interface GigDraft {
-  title: string;
-  date: string | null;
-  time: string | null;
-  endDate: string | null;
-  endTime: string | null;
-  slotDate: string | null;
-  slotTime: string | null;
-  slotEndTime: string | null;
-  venue: string | null;
-  city: string | null;
-  country: Country | null;
-  street: string | null;
-  postalCode: string | null;
-  district: string | null;
-  region: string | null;
-  latitude: number | null;
-  longitude: number | null;
-  lineup: string[];
-  entry: EntryType;
-  price: string | null;
-  description: string | null;
-  facebookUrl: string | null;
-  ticketUrl: string | null;
-  posterUrl: string | null;
-  cancelled: boolean;
-}
+// the shared parts (gig.yaml)
+export type Country = Shared['Country'];
+export type EntryType = Shared['EntryType'];
+/** A gig as the form holds it. Times are "HH:mm" (or "HH:mm:ss"). */
+export type GigDraft = Shared['GigDraft'];
+export type Problem = Shared['Problem'];
 
-export type PlatformStateName = 'live' | 'none' | 'queued' | 'running' | 'retrying' | 'failed';
+// the catalog (catalog.yaml)
+export type Gig = Catalog['Gig'];
+export type GigDetail = Catalog['GigDetail'];
+export type GigHistory = Catalog['GigHistory'];
+export type Edited = Catalog['GigEdited'];
+export type PlatformState = Catalog['PlatformState'];
+export type PlatformStateName = Catalog['PlatformStateName'];
+export type Platform = Catalog['Platform'];
+export type QueueResult = Catalog['QueueResult'];
 
-export interface PlatformState {
-  platform: string;
-  state: PlatformStateName;
-  ref: string | null;
-  url: string | null;
-  taskId: number | null;
-  action: SyncAction | null;
-  attempts: number;
-  nextAttemptAt: string | null;
-  message: string | null;
-}
+// the sync (sync.yaml)
+export type SyncAction = Sync['SyncAction'];
+export type SyncStatusName = Sync['SyncTaskStatus'];
+export type Task = Sync['Task'];
+export type TaskLog = Sync['LogEntry'];
+export type Breaker = Sync['Breaker'];
+export type SyncStatus = Sync['SyncStatus'];
 
-export interface Gig {
-  id: string;
-  rev: string;
-  past: boolean;
-  gig: GigDraft;
-  platforms: PlatformState[];
-}
+// the town picker (places.yaml)
+export type Town = PlacesApi['schemas']['Town'];
 
-export type SyncAction = 'PUBLISH' | 'UPDATE' | 'CANCEL' | 'DELETE' | 'REACTIVATE';
-export type SyncStatusName = 'PENDING' | 'RUNNING' | 'DONE' | 'FAILED' | 'DISCARDED';
+// the band calendar (calendar.yaml)
+export type CalendarKind = Calendar['CalendarKind'];
+export type CalendarFilter = Calendar['CalendarFilter'];
+export type CalendarRow = Calendar['CalendarRow'];
+export type CalendarOverview = Calendar['CalendarOverview'];
+export type CalendarRule = Calendar['Rule'];
+export type GigRef = Calendar['GigRef'];
+export type DifferenceKind = Calendar['MatchDifference']['kind'];
 
-export interface GigHistory {
-  taskId: number;
-  platform: string;
-  action: SyncAction;
-  status: SyncStatusName;
-  at: string;
-  message: string | null;
-}
+// the platform check (check.yaml)
+export type Drift = Check['Drift'];
+export type DriftField = Check['DriftField'];
+export type DriftRef = Check['DriftRef'];
+export type CheckState = Check['CheckState'];
 
-export interface GigDetail {
-  gig: Gig;
-  history: GigHistory[];
-}
+// import (import.yaml)
+export type ImportState = Import['ImportState'];
+export type ImportProposal = Import['ImportProposal'];
+export type ImportVersion = Import['ImportVersion'];
+export type ImportDecision = Import['ImportDecision'];
+export type ImportResult = Import['ImportResult'];
 
-export interface Platform {
-  id: string;
-  name: string;
-  keepsCancelledEvents: boolean;
-  listsBandSlot: boolean;
-  carriesAdmission: boolean;
-  exportable: boolean;
-}
-
-export interface QueueResult {
-  queued: { taskId: number; platform: string; action: SyncAction }[];
-  notQueued: string[];
-}
-
-export interface Edited {
-  gig: Gig;
-  queued: QueueResult;
-}
-
-export interface Task {
-  id: number;
-  gigId: string;
-  gigLabel: string;
-  platform: string;
-  action: SyncAction;
-  status: SyncStatusName;
-  retrying: boolean;
-  attempts: number;
-  createdAt: string;
-  updatedAt: string;
-  nextAttemptAt: string | null;
-  message: string | null;
-  step: string | null;
-}
-
-export interface TaskLog {
-  at: string;
-  message: string;
-}
-
-export interface Breaker {
-  platform: string;
-  failures: number;
-  heldUntil: string | null;
-  held: boolean;
-  trial: boolean;
-  lastFailure: string | null;
-}
-
-export interface SyncStatus {
-  paused: boolean;
-  breakers: Breaker[];
-  counts: { queued: number; running: number; retrying: number; failed: number };
-}
-
-export interface Town {
-  name: string;
-  district: string | null;
-  region: string | null;
-  postalCode: string | null;
-  country: Country | null;
-  latitude: number | null;
-  longitude: number | null;
-}
-
-export type CalendarKind = 'GIG' | 'UNSURE' | 'NOT_GIG';
-export type CalendarFilter = 'NEEDS_A_LOOK' | 'MISSING' | 'NOT_SURE' | 'GIGS' | 'NOT_GIGS' | 'DECIDED' | 'ALL';
-export type DifferenceKind = 'DATE' | 'SHOW_TIME' | 'CANCELLED' | 'REMOVED';
-
-export interface GigRef {
-  id: string;
-  title: string;
-  start: string;
-  city: string;
-  cancelled: boolean;
-}
-
-export interface CalendarRow {
-  eventId: string;
-  title: string;
-  location: string;
-  notes: string;
-  start: string;
-  end: string;
-  allDay: boolean;
-  kind: CalendarKind;
-  suggested: CalendarKind;
-  decidedByUser: boolean;
-  status: 'CONFIRMED' | 'TENTATIVE' | 'CANCELLED';
-  score: number;
-  reasons: { why: string; value: string | null; weight: number; text: string }[];
-  draft: {
-    title: string;
-    date: string;
-    showTime: string | null;
-    eventStart: string | null;
-    venue: string | null;
-    city: string | null;
-    country: Country | null;
-    street: string | null;
-    postalCode: string | null;
-  };
-  match: {
-    state: 'LINKED' | 'SAME_DAY' | 'MISSING';
-    gig: GigRef | null;
-    sameDay: GigRef[];
-    differences: { kind: DifferenceKind; text: string; calendar: string | null; catalog: string | null }[];
-  };
-  change: { type: 'NEW' | 'CHANGED' | 'REMOVED' | 'RETURNED'; fields: string[]; suggestedBefore: CalendarKind | null; at: string } | null;
-  removed: boolean;
-  missingFromCatalog: boolean;
-  needsAttention: boolean;
-  filters: CalendarFilter[];
-}
-
-export interface CalendarOverview {
-  configured: boolean;
-  lastRead: string | null;
-  counts: {
-    events: number;
-    gigs: number;
-    notSure: number;
-    missing: number;
-    changes: number;
-    differences: number;
-    linkable: number;
-    decided: number;
-  } | null;
-  rows: CalendarRow[];
-}
-
-export interface CalendarRule {
-  kind: string;
-  value: string | null;
-  weight: number;
-  weighted: boolean;
-  origin: string;
-  enabled: boolean;
-}
-
-export type DriftField = 'DATE' | 'TIME' | 'NAME' | 'VENUE' | 'TOWN' | 'COUNTRY' | 'PLACE' | 'CANCELLED';
-
-export interface Drift {
-  platform: string;
-  gigId: string;
-  gigLabel: string;
-  externalRef: string;
-  kind: 'MISSING' | 'DIFFERENT';
-  differences: { field: DriftField; catalog: string | null; platform: string | null; text: string }[];
-}
-
-export interface CheckState {
-  running: boolean;
-  last: {
-    checkedAt: string;
-    drifts: Drift[];
-    unreadable: Record<string, string>;
-    unlinked: Record<string, number>;
-  } | null;
-}
-
-export interface ImportVersion {
-  platform: string | null;
-  title: string;
-  start: string;
-  end: string | null;
-  venue: string | null;
-  city: string;
-  cancelled: boolean;
-}
-
-export interface ImportProposal {
-  index: number;
-  date: string;
-  inCatalog: boolean;
-  suggested: boolean;
-  hasConflict: boolean;
-  foundOn: string[];
-  versions: ImportVersion[];
-}
-
-export interface ImportState {
-  platforms: string[];
-  reading: boolean;
-  readError: string | null;
-  plan: {
-    proposals: ImportProposal[];
-    alreadyLinked: number;
-    skipped: string[];
-    failures: Record<string, string>;
-  } | null;
-}
-
-export interface ImportResult {
-  added: number;
-  updated: number;
-  linked: number;
-  skipped: number;
-}
-
-export interface Me {
-  username: string;
-}
+// signing in (auth.yaml) and the live updates (live.yaml)
+export type Me = AuthApi['schemas']['Me'];
+export type LiveTopic = LiveApi['schemas']['LiveTopic'];

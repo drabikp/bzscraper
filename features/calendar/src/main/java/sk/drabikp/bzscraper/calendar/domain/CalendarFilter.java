@@ -3,9 +3,14 @@ package sk.drabikp.bzscraper.calendar.domain;
 import sk.drabikp.bzscraper.calendar.domain.event.CalendarEventKind;
 import sk.drabikp.bzscraper.calendar.domain.event.CalendarEventStatus;
 
+import sk.drabikp.bzscraper.gig.domain.GigId;
+
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 /**
  * The calendar page's views of the events, and its counts. "Needs a look" is what the user
@@ -47,8 +52,27 @@ public enum CalendarFilter {
                 count(rows, r -> r.missingFromCatalog() && recent(r, today)),
                 count(rows, r -> r.change() != null),
                 count(rows, r -> !r.match().differences().isEmpty()),
-                count(rows, r -> r.missingFromCatalog() && r.match().gig() != null),
+                linkable(rows).size(),
                 count(rows, r -> r.classification().decidedByUser()));
+    }
+
+    /**
+     * The gig events that can be linked to the catalog's gig that day without asking: the only
+     * gig that day, not linked to another event yet, and wanted by no other event (two events
+     * for one gig: the user picks).
+     */
+    public static List<CalendarRow> linkable(List<CalendarRow> rows) {
+        Set<GigId> taken = rows.stream()
+                .filter(r -> r.match().state() == CatalogMatch.State.LINKED && r.match().gig() != null)
+                .map(r -> r.match().gig().id())
+                .collect(Collectors.toSet());
+        List<CalendarRow> candidates = rows.stream()
+                .filter(r -> r.missingFromCatalog() && r.match().gig() != null
+                        && !taken.contains(r.match().gig().id()))
+                .toList();
+        Map<GigId, Long> claims = candidates.stream()
+                .collect(Collectors.groupingBy(r -> r.match().gig().id(), Collectors.counting()));
+        return candidates.stream().filter(r -> claims.get(r.match().gig().id()) == 1).toList();
     }
 
     private static boolean notSure(CalendarRow r) {

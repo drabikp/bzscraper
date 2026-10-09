@@ -80,7 +80,7 @@ class BandsintownCsvTest {
     }
 
     @Test
-    void street_and_postal_code_go_along_so_bandsintown_finds_the_right_town() throws Exception {
+    void street_postal_code_and_region_go_along_so_bandsintown_finds_the_right_town() throws Exception {
         Gig located = new Gig("Fest", gig.schedule(), new Location("Zámecký klub", "Hranice", Country.CZECHIA,
                 new Address("Pernštejnské nám. 1", "753 01", "okres Přerov", "Olomoucký kraj", 49.548, 17.735)),
                 List.of(), gig.admission(), null, null, null, null, false);
@@ -89,7 +89,9 @@ class BandsintownCsvTest {
 
         assertThat(row[3]).isEqualTo("Pernštejnské nám. 1");
         assertThat(row[4]).isEqualTo("Hranice");
+        assertThat(row[5]).isEqualTo("Olomoucký kraj");
         assertThat(row[6]).isEqualTo("753 01");
+        assertThat(parse(BandsintownCsv.newEvents(List.of(gig), "X", false)).get(1)[5]).isEmpty();
         assertThat(parse(BandsintownCsv.newEvents(List.of(gig), "X", false)).get(1)[6]).isEmpty();
     }
 }

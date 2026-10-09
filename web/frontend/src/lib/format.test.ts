@@ -1,5 +1,5 @@
 import i18n from '../i18n';
-import { dayParts, fold, hhmm, localDate } from './format';
+import { dayParts, fold, hhmm, localDate, setTimeFormat, timeOfDay } from './format';
 import { applyShow } from '../pages/GigFormPage';
 import type { GigDraft } from '../api/types';
 
@@ -8,6 +8,16 @@ describe('dates and times', () => {
     expect(localDate('2026-10-17', '20:30').getHours()).toBe(20);
     expect(localDate('2026-10-17T21:15:00').getMinutes()).toBe(15);
     expect(hhmm('20:30:00')).toBe('20:30');
+  });
+
+  it('show a time in the chosen format, the value stays 24-hour', () => {
+    expect(timeOfDay('20:30:00')).toBe('20:30');
+    setTimeFormat('12h');
+    expect(timeOfDay('20:30:00')).toBe('8:30 PM');
+    expect(timeOfDay('00:05')).toBe('12:05 AM');
+    expect(timeOfDay('12:00')).toBe('12:00 PM');
+    expect(hhmm('20:30:00')).toBe('20:30');
+    setTimeFormat('24h');
   });
 
   it('say the day in the page’s language', async () => {

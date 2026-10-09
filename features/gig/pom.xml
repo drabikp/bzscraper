@@ -20,19 +20,61 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-flyway</artifactId>
 		</dependency>
+		<!-- the generated API classes (gig.api and every feature's) carry these annotations -->
+		<dependency>
+			<groupId>jakarta.validation</groupId>
+			<artifactId>jakarta.validation-api</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>com.fasterxml.jackson.core</groupId>
+			<artifactId>jackson-annotations</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.flywaydb</groupId>
+			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<!-- only to read the old H2 database's SQL backup for the one-time import -->
 		<dependency>
 			<groupId>com.h2database</groupId>
 			<artifactId>h2</artifactId>
-			<scope>runtime</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<dependency>
+			<groupId>org.testcontainers</groupId>
+			<artifactId>testcontainers-postgresql</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 	<build>
 		<plugins>
+			<plugin>
+				<!-- the API's shared parts: GigDraft, Country, EntryType, Problem → sk.drabikp.bzscraper.gig.api -->
+				<groupId>org.openapitools</groupId>
+				<artifactId>openapi-generator-maven-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>api</id>
+						<configuration>
+							<inputSpec>${project.basedir}/src/main/openapi/gig.yaml</inputSpec>
+							<modelPackage>sk.drabikp.bzscraper.gig.api</modelPackage>
+							<generateApis>false</generateApis>
+							<!-- here they are made, not mapped to existing classes -->
+							<schemaMappings combine.self="override">
+								<schemaMapping>TimeOfDay=java.lang.String</schemaMapping>
+							</schemaMappings>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
 			<plugin>
 				<!-- TestGigs and TestPlatforms are shared with the other modules' tests -->
 				<groupId>org.apache.maven.plugins</groupId>

@@ -5,6 +5,7 @@ import sk.drabikp.bzscraper.sync.application.port.in.SyncLogUseCase;
 import sk.drabikp.bzscraper.sync.application.port.out.SyncNotifier;
 import sk.drabikp.bzscraper.sync.application.port.out.SyncOutbox;
 import sk.drabikp.bzscraper.sync.application.port.out.SyncTrigger;
+import sk.drabikp.bzscraper.sync.domain.SyncCounts;
 import sk.drabikp.bzscraper.sync.domain.SyncLogEntry;
 import sk.drabikp.bzscraper.sync.domain.SyncStatus;
 import sk.drabikp.bzscraper.sync.domain.SyncTask;
@@ -14,6 +15,9 @@ import java.util.List;
 
 /** The sync log for the user: reading it, and retrying or discarding what the worker gave up on. */
 public class SyncLogService implements SyncLogUseCase {
+
+    /** How many of the latest tasks "all" shows. */
+    static final int LATEST = 500;
 
     private final SyncOutbox outbox;
     private final SyncTrigger trigger;
@@ -35,6 +39,20 @@ public class SyncLogService implements SyncLogUseCase {
     @Override
     public List<SyncTask> recent(int limit) {
         return outbox.recent(limit);
+    }
+
+    @Override
+    public List<SyncTask> tasks(Show show) {
+        return switch (show) {
+            case ALL -> outbox.recent(LATEST);
+            case OPEN -> outbox.unfinished().reversed();
+            case FAILED -> outbox.unfinished().stream().filter(t -> t.status() == SyncStatus.FAILED).toList().reversed();
+        };
+    }
+
+    @Override
+    public SyncCounts counts() {
+        return SyncCounts.of(outbox.unfinished());
     }
 
     @Override

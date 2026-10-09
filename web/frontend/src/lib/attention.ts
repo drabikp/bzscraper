@@ -1,8 +1,8 @@
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import type { TFunction } from 'i18next';
 import {
-  decide,
+  type CalendarCommand,
   useCalendar,
   useCalendarAction,
   useCheck,
@@ -16,7 +16,7 @@ import {
 } from '../api/hooks';
 import type { CalendarRow, Drift } from '../api/types';
 import { done, failed, queued } from './notify';
-import { hhmm, shortDate } from './format';
+import { hhmm, shortDate, timeOfDay } from './format';
 
 /** One thing to do, as a button. */
 export interface Action {
@@ -52,8 +52,8 @@ export function differenceText(t: TFunction, d: CalendarRow['match']['difference
       return t('diff.date', { calendar: shortDate(d.calendar!), catalog: shortDate(d.catalog!) });
     case 'SHOW_TIME':
       return d.catalog === null
-        ? t('diff.slotOnly', { calendar: `${shortDate(d.calendar!.split('T')[0])} ${hhmm(d.calendar!.split('T')[1])}` })
-        : t('diff.showTime', { calendar: hhmm(d.calendar), catalog: hhmm(d.catalog) });
+        ? t('diff.slotOnly', { calendar: `${shortDate(d.calendar!.split('T')[0])} ${timeOfDay(d.calendar!.split('T')[1])}` })
+        : t('diff.showTime', { calendar: timeOfDay(d.calendar), catalog: timeOfDay(d.catalog) });
     case 'CANCELLED':
       return t('diff.cancelled');
     case 'REMOVED':
@@ -91,12 +91,14 @@ export function driftText(t: TFunction, d: Drift['differences'][number], platfor
 export function useCalendarRowActions() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
+  // the form goes back where it was opened from (the calendar's view, the Inbox)
+  const from = { state: { back: location.pathname + location.search } };
   const calendar = useCalendarAction();
   const gigAction = useGigAction();
   const name = usePlatformName();
-  const call = (path: string, body?: unknown, message?: string) =>
-    calendar.mutate({ path, body }, { onSuccess: () => message && done(message), onError: failed });
-  const event = (row: CalendarRow) => `events/${encodeURIComponent(row.eventId)}`;
+  const call = (command: CalendarCommand, message?: string) =>
+    calendar.mutate(command, { onSuccess: () => message && done(message), onError: failed });
 
   return (row: CalendarRow, full = false): Action[] => {
     const actions: Action[] = [];
@@ -107,7 +109,7 @@ export function useCalendarRowActions() {
       if (has('DATE') || has('SHOW_TIME')) {
         const params = new URLSearchParams({ fromEvent: row.eventId, day: row.draft.date, moveDay: has('DATE') ? '1' : '0' });
         if (row.draft.showTime) params.set('time', hhmm(row.draft.showTime));
-        actions.push({ label: t('calendar.updateGig'), primary: true, run: () => navigate(`/gig/${gig.id}/edit?${params}`) });
+        actions.push({ label: t('calendar.updateGig'), primary: true, run: () => navigate(`/gig/${gig.id}/edit?${params}`, from) });
       }
       if ((has('CANCELLED') || has('REMOVED')) && !gig.cancelled) {
         actions.push({
@@ -117,7 +119,7 @@ export function useCalendarRowActions() {
             gigAction.mutate({ id: gig.id, action: 'cancel' }, {
               onSuccess: (result) => {
                 queued(t, t('toast.cancelled'), result, name);
-                call(`${event(row)}/seen`);
+                call({ kind: 'seen', event: row.eventId });
               },
               onError: failed,
             }),
@@ -132,41 +134,41 @@ export function useCalendarRowActions() {
             gigAction.mutate({ id: gig.id, action: 'delete' }, {
               onSuccess: (result) => {
                 queued(t, t('toast.deleted'), result, name);
-                call(`${event(row)}/seen`);
+                call({ kind: 'seen', event: row.eventId });
               },
               onError: failed,
             }),
         });
-        actions.push({ label: t('calendar.keepGig'), run: () => call(`${event(row)}/seen`, undefined, t('toast.done')) });
+        actions.push({ label: t('calendar.keepGig'), run: () => call({ kind: 'seen', event: row.eventId }, t('toast.done')) });
       }
     } else if (row.missingFromCatalog && row.status !== 'CANCELLED') {
-      actions.push({ label: t('calendar.addGig'), primary: true, run: () => navigate(`/calendar/${encodeURIComponent(row.eventId)}/add`) });
+      actions.push({ label: t('calendar.addGig'), primary: true, run: () => navigate(`/calendar/${encodeURIComponent(row.eventId)}/add`, from) });
       if (match.state === 'SAME_DAY' && match.gig) {
         actions.push({
           label: t('calendar.linkTo', { title: match.gig.title }),
-          run: () => call(`${event(row)}/link`, { gig: match.gig!.id }, t('toast.linked')),
+          run: () => call({ kind: 'link', event: row.eventId, gig: match.gig!.id }, t('toast.linked')),
         });
       }
     }
     if (!row.removed) {
       if (row.decidedByUser) {
-        if (full) actions.push({ label: t('calendar.undo'), run: () => call(`${event(row)}/forget`) });
+        if (full) actions.push({ label: t('calendar.undo'), run: () => call({ kind: 'forget', event: row.eventId }) });
       } else {
         if (row.kind !== 'GIG') {
-          const d = decide(row.eventId, 'GIG');
-          actions.push({ label: t('calendar.itsAGig'), primary: actions.length === 0, run: () => call(d.path, d.body) });
+          actions.push({ label: t('calendar.itsAGig'), primary: actions.length === 0,
+            run: () => call({ kind: 'decide', event: row.eventId, verdict: 'GIG' }) });
         }
         if (row.kind !== 'NOT_GIG') {
-          const d = decide(row.eventId, 'NOT_GIG');
-          actions.push({ label: t('calendar.notAGig'), run: () => call(d.path, d.body, t('toast.notGig')) });
+          actions.push({ label: t('calendar.notAGig'),
+            run: () => call({ kind: 'decide', event: row.eventId, verdict: 'NOT_GIG' }, t('toast.notGig')) });
         }
       }
     }
     if (full && match.state === 'LINKED' && !row.removed) {
-      actions.push({ label: t('calendar.unlink'), run: () => call(`${event(row)}/unlink`) });
+      actions.push({ label: t('calendar.unlink'), run: () => call({ kind: 'unlink', event: row.eventId }) });
     }
     if (row.change && !has('REMOVED')) {
-      actions.push({ label: t('calendar.seen'), run: () => call(`${event(row)}/seen`) });
+      actions.push({ label: t('calendar.seen'), run: () => call({ kind: 'seen', event: row.eventId }) });
     }
     return actions;
   };
@@ -209,13 +211,13 @@ export function useInbox() {
         {
           label: t('inbox.retry'),
           primary: true,
-          run: () => sync.mutate({ path: `tasks/${task.id}/retry` }, { onSuccess: () => done(t('toast.retrying', { platform: name(task.platform) })), onError: failed }),
+          run: () => sync.mutate({ kind: 'retry', task: task.id }, { onSuccess: () => done(t('toast.retrying', { platform: name(task.platform) })), onError: failed }),
         },
         { label: t('inbox.openGig'), run: () => navigate(`/gig/${task.gigId}`) },
         {
           label: t('inbox.discard'),
           confirm: { title: t('inbox.discardTitle'), text: t('inbox.discardText'), yes: t('inbox.discard') },
-          run: () => sync.mutate({ path: `tasks/${task.id}/discard` }, { onSuccess: () => done(t('toast.done')), onError: failed }),
+          run: () => sync.mutate({ kind: 'discard', task: task.id }, { onSuccess: () => done(t('toast.done')), onError: failed }),
         },
       ],
     });
@@ -231,7 +233,7 @@ export function useInbox() {
       actions: [{
         label: t('inbox.resume'),
         primary: true,
-        run: () => sync.mutate({ path: `breakers/${breaker.platform}/resume` }, { onSuccess: () => done(t('toast.resumed', { platform: name(breaker.platform) })), onError: failed }),
+        run: () => sync.mutate({ kind: 'resumePlatform', platform: breaker.platform }, { onSuccess: () => done(t('toast.resumed', { platform: name(breaker.platform) })), onError: failed }),
       }],
     });
   }
@@ -251,7 +253,7 @@ export function useInbox() {
   for (const drift of check.data?.last?.drifts ?? []) {
     const platform = name(drift.platform);
     const ref = { platform: drift.platform, gig: drift.gigId };
-    const dismiss = () => checkAction.mutate({ path: 'dismiss', body: ref });
+    const dismiss = () => checkAction.mutate({ kind: 'dismiss', ref });
     items.push({
       key: `drift-${drift.platform}-${drift.gigId}`,
       kind: 'drift',
@@ -263,7 +265,7 @@ export function useInbox() {
       gigId: drift.gigId,
       actions: drift.kind === 'MISSING'
         ? [
-            { label: t('check.forget'), primary: true, run: () => checkAction.mutate({ path: 'forget', body: ref }, { onSuccess: () => done(t('toast.unlinked')), onError: failed }) },
+            { label: t('check.forget'), primary: true, run: () => checkAction.mutate({ kind: 'forget', ref }, { onSuccess: () => done(t('toast.unlinked')), onError: failed }) },
             { label: t('check.ignore'), run: dismiss },
           ]
         : [

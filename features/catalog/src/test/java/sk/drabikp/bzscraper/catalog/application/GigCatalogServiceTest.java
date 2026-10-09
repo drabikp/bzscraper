@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import sk.drabikp.bzscraper.catalog.application.port.in.GigBusyException;
 import sk.drabikp.bzscraper.catalog.application.port.in.GigIdentityTakenException;
 import sk.drabikp.bzscraper.gig.application.ConcurrentChangeException;
+import sk.drabikp.bzscraper.gig.application.NotFoundException;
 import sk.drabikp.bzscraper.gig.domain.Gig;
 import sk.drabikp.bzscraper.gig.domain.TestGigs;
 import sk.drabikp.bzscraper.gig.domain.platform.Publication;
@@ -219,5 +220,14 @@ class GigCatalogServiceTest {
 
         assertThat(service.publicationsByGig().get(gig.id())).containsOnlyKeys(BANDZONE, BANDSINTOWN)
                 .containsEntry(BANDZONE, new Publication(BANDZONE, gig.id(), "100"));
+    }
+
+    @Test
+    void a_gig_is_found_by_its_identity_and_one_that_isnt_there_is_not_found() {
+        service.add(gig);
+
+        assertThat(service.gig(gig.id())).isEqualTo(gig);
+        assertThatThrownBy(() -> service.gig(TestGigs.gig("Other", "Klub 008").id()))
+                .isInstanceOf(NotFoundException.class);
     }
 }

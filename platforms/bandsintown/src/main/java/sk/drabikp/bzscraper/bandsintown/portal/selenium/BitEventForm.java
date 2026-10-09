@@ -47,14 +47,13 @@ final class BitEventForm {
     }
 
     /**
-     * Searches the venue ("venue town") and picks the suggestion in the gig's town; none →
+     * Searches the venue ({@link BitPlaces#query}) and picks the suggestion in the gig's town; none →
      * the user has to set the place. The field's own "Clear value" drops the old place first
      * (typing over it would keep it); the pick is checked in the field.
      */
     public void pickVenue(Gig gig) throws BitUploadException {
         String city = gig.location().city();
-        String query = gig.location().venue() != null ? gig.location().venue() + " " + city
-                : city + " " + gig.location().countryName();
+        String query = BitPlaces.query(gig);
         int mark = portal.replies.count();
         WebElement clear = (WebElement) portal.js("var e = arguments[0]; for (var i = 0; i < 4 && e.parentElement; i++)"
                 + " e = e.parentElement; return e.querySelector(\"button[aria-label='Clear value']\");", venueField());

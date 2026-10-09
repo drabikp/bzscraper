@@ -34,7 +34,7 @@ import { PageHeader } from '../components/PageHeader';
 import { Sheet } from '../components/Sheet';
 import { StatusChip } from '../components/StatusChip';
 import { usePlatformName } from '../lib/attention';
-import { clock, hhmm, longDate, shortDate, when } from '../lib/format';
+import { clock, longDate, shortDate, timeOfDay, when } from '../lib/format';
 import { done, failed, queued } from '../lib/notify';
 import { useIsMobile } from '../lib/useIsMobile';
 
@@ -94,11 +94,11 @@ function PlatformCard({ gig, state, platform }: { gig: Gig; state: PlatformState
           {state.state === 'failed' && state.taskId && (
             <>
               <Button size="sm" loading={sync.isPending}
-                onClick={() => sync.mutate({ path: `tasks/${state.taskId}/retry` }, { onSuccess: () => done(t('toast.retrying', { platform: name })), onError: failed })}>
+                onClick={() => sync.mutate({ kind: 'retry', task: state.taskId! }, { onSuccess: () => done(t('toast.retrying', { platform: name })), onError: failed })}>
                 {t('gig.retry')}
               </Button>
               <Button size="sm" variant="default"
-                onClick={() => sync.mutate({ path: `tasks/${state.taskId}/discard` }, { onSuccess: () => done(t('toast.done')), onError: failed })}>
+                onClick={() => sync.mutate({ kind: 'discard', task: state.taskId! }, { onSuccess: () => done(t('toast.done')), onError: failed })}>
                 {t('gig.discard')}
               </Button>
             </>
@@ -161,9 +161,9 @@ export function GigPage() {
   const published = gig.platforms.filter((p) => p.state !== 'none');
   const linkedEvent = calendar.data?.rows.find((r) => r.match.state === 'LINKED' && r.match.gig?.id === gig.id);
   const facts: [string, string][] = [
-    [t('gig.starts'), `${shortDate(d.date!)} ${hhmm(d.time)}`],
-    [t('gig.ends'), d.endTime ? `${d.endDate ? shortDate(d.endDate) + ' ' : ''}${hhmm(d.endTime)}` : '—'],
-    [t('gig.slot'), d.slotTime ? `${shortDate(d.slotDate!)} ${hhmm(d.slotTime)}${d.slotEndTime ? '–' + hhmm(d.slotEndTime) : ''}` : '—'],
+    [t('gig.starts'), `${shortDate(d.date!)} ${timeOfDay(d.time)}`],
+    [t('gig.ends'), d.endTime ? `${d.endDate ? shortDate(d.endDate) + ' ' : ''}${timeOfDay(d.endTime)}` : '—'],
+    [t('gig.slot'), d.slotTime ? `${shortDate(d.slotDate!)} ${timeOfDay(d.slotTime)}${d.slotEndTime ? '–' + timeOfDay(d.slotEndTime) : ''}` : '—'],
     [t('gig.venue'), d.venue || t('gig.tba')],
     [t('gig.town'), [d.city, d.district, d.country ? t(`country.${d.country}`) : null].filter(Boolean).join(' · ')],
     [t('gig.entry'), t(`entry.${d.entry}`) + (d.entry === 'PAID' && d.price ? ` · ${d.price}` : '')],
@@ -297,8 +297,8 @@ export function GigPage() {
           <DateBlock date={d.date!} muted={d.cancelled} size="lg" />
           <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
             <Text fw={600}>
-              {longDate(d.date!)} · {hhmm(d.time)}
-              {d.endTime ? `–${hhmm(d.endTime)}` : ''}
+              {longDate(d.date!)} · {timeOfDay(d.time)}
+              {d.endTime ? `–${timeOfDay(d.endTime)}` : ''}
             </Text>
             <Group gap={6} c="dimmed" wrap="nowrap">
               <IconMapPin size={16} style={{ flexShrink: 0 }} />

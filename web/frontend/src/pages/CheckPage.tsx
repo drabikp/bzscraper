@@ -34,7 +34,7 @@ export function CheckPage() {
             </Text>
             {last && <Text size="sm" c="dimmed">{t('check.lastRun', { when: when(last.checkedAt), ago: relative(last.checkedAt) })}</Text>}
           </div>
-          <Button loading={running || action.isPending} onClick={() => action.mutate({ path: 'run' }, { onError: failed })}>
+          <Button loading={running || action.isPending} onClick={() => action.mutate({ kind: 'run' }, { onError: failed })}>
             {t('check.now')}
           </Button>
         </Group>

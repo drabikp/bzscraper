@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
 import { QueryClient, useQueryClient } from '@tanstack/react-query';
+import type { LiveTopic } from './types';
 
-/** What each live event makes the page read again. */
-const READ_AGAIN: Record<string, string[][]> = {
+/** What each live event (live.yaml's LiveTopic — every one must be here) makes the page read again. */
+const READ_AGAIN: Record<LiveTopic, string[][]> = {
   gigs: [['gigs']],
   sync: [['sync'], ['gigs']],
   check: [['check']],
@@ -10,8 +11,8 @@ const READ_AGAIN: Record<string, string[][]> = {
   calendar: [['calendar']],
 };
 
-function refresh(client: QueryClient, topic: string) {
-  (READ_AGAIN[topic] ?? []).forEach((queryKey) => client.invalidateQueries({ queryKey }));
+function refresh(client: QueryClient, topic: LiveTopic) {
+  READ_AGAIN[topic].forEach((queryKey) => client.invalidateQueries({ queryKey }));
 }
 
 /**
@@ -33,7 +34,8 @@ export function useLiveUpdates(enabled: boolean) {
         if (opened) client.invalidateQueries();
         opened = true;
       });
-      Object.keys(READ_AGAIN).forEach((topic) => source!.addEventListener(topic, () => refresh(client, topic)));
+      (Object.keys(READ_AGAIN) as LiveTopic[]).forEach((topic) =>
+        source!.addEventListener(topic, () => refresh(client, topic)));
     };
     const wake = () => {
       if (document.visibilityState === 'visible' && (!source || source.readyState === EventSource.CLOSED)) {

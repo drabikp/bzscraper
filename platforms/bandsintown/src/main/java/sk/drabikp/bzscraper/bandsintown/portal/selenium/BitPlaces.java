@@ -3,6 +3,7 @@ package sk.drabikp.bzscraper.bandsintown.portal.selenium;
 import sk.drabikp.bzscraper.gig.domain.Address;
 import sk.drabikp.bzscraper.gig.domain.CityName;
 import sk.drabikp.bzscraper.gig.domain.Gig;
+import sk.drabikp.bzscraper.gig.domain.Location;
 import sk.drabikp.bzscraper.gig.domain.TextFold;
 
 import java.util.Arrays;
@@ -21,6 +22,21 @@ final class BitPlaces {
     private static final double TOLERANCE_KM = 25;
 
     private BitPlaces() {
+    }
+
+    /**
+     * What to type into the venue search: "venue town"; without a venue "town district country"
+     * — the district ("okres Ústí nad Orlicí" → "Ústí nad Orlicí") puts the right one of several
+     * same-named villages first.
+     */
+    static String query(Gig gig) {
+        Location location = gig.location();
+        if (location.venue() != null) {
+            return location.venue() + " " + location.city();
+        }
+        String district = location.address() == null || location.address().district() == null ? ""
+                : location.address().district().replaceFirst("^(?i)okres\\s+", "") + " ";
+        return location.city() + " " + district + location.countryName();
     }
 
     static BitPlace choose(List<BitPlace> places, String venue, String city) {

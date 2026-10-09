@@ -1,6 +1,7 @@
 package sk.drabikp.bzscraper.catalog.application;
 
 import sk.drabikp.bzscraper.catalog.application.port.out.GigMovedListener;
+import sk.drabikp.bzscraper.gig.application.port.out.LiveUpdates;
 import sk.drabikp.bzscraper.gig.domain.GigId;
 import sk.drabikp.bzscraper.sync.application.SyncFakes;
 import sk.drabikp.bzscraper.sync.application.SyncRequests;
@@ -40,6 +41,6 @@ public final class CatalogFakes {
                                             SyncFakes.DirectTransactions transactions, SyncFakes.Outbox outbox,
                                             SyncRequests requests, GigMovedListener... listeners) {
         return new GigCatalogService(gigs, published, transactions, requests,
-                writes(gigs, published, outbox, requests, listeners));
+                writes(gigs, published, outbox, requests, listeners), LiveUpdates.NONE);
     }
 }

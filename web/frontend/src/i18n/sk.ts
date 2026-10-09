@@ -109,6 +109,7 @@ export const sk = {
     allGood: 'Nič netreba pozrieť.', none: 'Žiadne udalosti.', summary: 'Udalostí: {{events}}, z toho koncertov: {{gigs}}.',
     linkSameDay_one: 'Prepojiť {{count}} udalosť s koncertom v ten deň', linkSameDay_few: 'Prepojiť {{count}} udalosti s koncertom v ten deň',
     linkSameDay_many: 'Prepojiť {{count}} udalosti s koncertom v ten deň', linkSameDay_other: 'Prepojiť {{count}} udalostí s koncertom v ten deň',
+    linkSameDayTitle: 'Prepojiť s koncertom v ten deň', linkSameDayText: 'Každá z týchto udalostí v kalendári sa prepojí s jediným koncertom v tvojom zozname v ten deň:', linkThem: 'Prepojiť',
     allSeen: 'Označiť všetky zmeny ako videné', allDay: 'celý deň', byYou: 'podľa teba', linked: 'Prepojené: {{title}}', why: 'Prečo? (skóre {{score}})',
     updateGig: 'Upraviť koncert', cancelGig: 'Zrušiť koncert', deleteGig: 'Vymazať koncert', keepGig: 'Ponechať koncert', addGig: 'Pridať koncert',
     linkTo: 'Je to „{{title}}“', itsAGig: 'Je to koncert', notAGig: 'Nie je koncert', undo: 'Vrátiť moju odpoveď', unlink: 'Odpojiť', seen: 'Videné',
@@ -179,6 +180,7 @@ export const sk = {
     title: 'Nastavenia', language: 'Jazyk', appearance: 'Vzhľad', auto: 'Podľa zariadenia', light: 'Svetlý', dark: 'Tmavý',
     platforms: 'Platformy', working: 'Funguje', heldBack: 'Pozastavená', sync: 'Synchronizácia', account: 'Účet',
     signedInAs: 'Prihlásený ako {{name}}', signOut: 'Odhlásiť sa',
+    timeFormat: 'Formát času', time24: '24-hodinový (20:30)', time12: '12-hodinový (8:30 PM)',
   },
   more: {
     installTitle: 'Pridaj si Gig sync hub na plochu', installText: 'Otvoríš ho jedným ťuknutím, na celú obrazovku, ako aplikáciu.',

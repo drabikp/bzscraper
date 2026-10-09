@@ -6,6 +6,8 @@ import sk.drabikp.bzscraper.calendar.domain.event.CalendarEventKind;
 import sk.drabikp.bzscraper.calendar.domain.event.CalendarEventStatus;
 import sk.drabikp.bzscraper.calendar.domain.rules.CalendarClassification;
 import sk.drabikp.bzscraper.gig.domain.Country;
+import sk.drabikp.bzscraper.gig.domain.Gig;
+import sk.drabikp.bzscraper.gig.domain.TestGigs;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -20,14 +22,25 @@ class CalendarFilterTest {
 
     private static CalendarRow row(LocalDate day, CalendarEventKind kind, CalendarEventStatus status,
                                    CatalogMatch.State state, CalendarChange change, boolean removed) {
+        return row(day, kind, status, new CatalogMatch(state, null, List.of(), List.of()), change, removed);
+    }
+
+    private static CalendarRow row(LocalDate day, CalendarEventKind kind, CalendarEventStatus status,
+                                   CatalogMatch match, CalendarChange change, boolean removed) {
+        CatalogMatch.State state = match.state();
         CalendarEvent event = new CalendarEvent("e-" + day + kind + status + state + removed, "Event", "", "",
                 day.atTime(18, 0), null, false, false, false, status, null);
         CalendarClassification classification = new CalendarClassification(event, kind, kind, false, status, 0,
                 List.of());
         CalendarGigDraft draft = new CalendarGigDraft(event.id(), "Event", day, null, null, "Praha", Country.CZECHIA,
                 null, null, null);
-        return new CalendarRow(classification, draft, new CatalogMatch(state, null, List.of(), List.of()), change,
-                removed);
+        return new CalendarRow(classification, draft, match, change, removed);
+    }
+
+    private static CalendarRow gig(LocalDate day, CatalogMatch.State state, Gig gig) {
+        return row(day, CalendarEventKind.GIG, CalendarEventStatus.CONFIRMED,
+                new CatalogMatch(state, gig, state == CatalogMatch.State.SAME_DAY ? List.of(gig) : List.of(), List.of()),
+                null, false);
     }
 
     private static CalendarRow gig(LocalDate day, CatalogMatch.State state) {
@@ -85,5 +98,21 @@ class CalendarFilterTest {
         assertThat(counts.notSure()).isEqualTo(1);
         assertThat(counts.missing()).isEqualTo(1);
         assertThat(counts.linkable()).isZero();
+    }
+
+    @Test
+    void only_events_the_bulk_link_takes_are_counted_as_linkable() {
+        Gig fest = TestGigs.gig("Fest", "Klub 007");
+        Gig club = TestGigs.gig("Club", "Klub 008");
+        Gig bar = TestGigs.gig("Bar", "Klub 009");
+        CalendarRow festFirstDay = gig(TODAY.plusDays(1), CatalogMatch.State.LINKED, fest);
+        CalendarRow festSecondDay = gig(TODAY.plusDays(2), CatalogMatch.State.SAME_DAY, fest);
+        CalendarRow clubArrival = gig(TODAY.plusDays(3), CatalogMatch.State.SAME_DAY, club);
+        CalendarRow clubShow = gig(TODAY.plusDays(4), CatalogMatch.State.SAME_DAY, club);
+        CalendarRow barShow = gig(TODAY.plusDays(5), CatalogMatch.State.SAME_DAY, bar);
+        List<CalendarRow> rows = List.of(festFirstDay, festSecondDay, clubArrival, clubShow, barShow);
+
+        assertThat(CalendarFilter.linkable(rows)).containsExactly(barShow);
+        assertThat(CalendarFilter.count(rows, TODAY).linkable()).isEqualTo(1);
     }
 }

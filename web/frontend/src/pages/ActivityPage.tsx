@@ -61,12 +61,12 @@ function TaskRow({ task }: { task: Task }) {
           <Group gap="xs" mt="xs">
             <Anchor component={Link} to={`/gig/${task.gigId}`} size="sm">{t('activity.openGig')}</Anchor>
             {(task.status === 'FAILED' || task.status === 'DISCARDED') && (
-              <Button size="xs" onClick={() => sync.mutate({ path: `tasks/${task.id}/retry` }, { onSuccess: () => done(t('toast.retrying', { platform: name(task.platform) })), onError: failed })}>
+              <Button size="xs" onClick={() => sync.mutate({ kind: 'retry', task: task.id }, { onSuccess: () => done(t('toast.retrying', { platform: name(task.platform) })), onError: failed })}>
                 {t('activity.retry')}
               </Button>
             )}
             {(task.status === 'FAILED' || task.status === 'PENDING') && (
-              <Button size="xs" variant="default" onClick={() => sync.mutate({ path: `tasks/${task.id}/discard` }, { onSuccess: () => done(t('toast.done')), onError: failed })}>
+              <Button size="xs" variant="default" onClick={() => sync.mutate({ kind: 'discard', task: task.id }, { onSuccess: () => done(t('toast.done')), onError: failed })}>
                 {t('activity.discard')}
               </Button>
             )}
@@ -99,13 +99,13 @@ export function ActivityPage() {
       <PageHeader title={t('activity.title')} phoneBack="/more" />
       <Paper withBorder p="md">
         <Switch size="md" checked={paused} label={t('activity.pause')} description={paused ? t('activity.pausedHelp') : t('activity.pauseHelp')}
-          onChange={() => sync.mutate({ path: paused ? 'resume' : 'pause' }, { onError: failed })} />
+          onChange={() => sync.mutate({ kind: paused ? 'resume' : 'pause' }, { onError: failed })} />
       </Paper>
       {(status.data?.breakers ?? []).filter((b) => b.heldUntil).map((b) => (
         <Alert key={b.platform} color="orange" variant="light" title={t('inbox.heldTitle', { platform: name(b.platform) })}>
           <Stack gap="xs">
             <Text size="sm">{b.held ? t('inbox.heldBody', { failures: b.failures, time: clock(b.heldUntil), last: b.lastFailure ?? '' }) : t('activity.trial')}</Text>
-            <Button size="xs" w="fit-content" onClick={() => sync.mutate({ path: `breakers/${b.platform}/resume` }, { onError: failed })}>{t('inbox.resume')}</Button>
+            <Button size="xs" w="fit-content" onClick={() => sync.mutate({ kind: 'resumePlatform', platform: b.platform }, { onError: failed })}>{t('inbox.resume')}</Button>
           </Stack>
         </Alert>
       ))}

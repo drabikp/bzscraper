@@ -4,7 +4,9 @@ import org.junit.jupiter.api.Test;
 import sk.drabikp.bzscraper.gig.application.UserFacingException;
 import sk.drabikp.bzscraper.gig.domain.Gig;
 import sk.drabikp.bzscraper.gig.domain.TestGigs;
+import sk.drabikp.bzscraper.sync.application.port.in.SyncLogUseCase.Show;
 import sk.drabikp.bzscraper.sync.domain.SyncAction;
+import sk.drabikp.bzscraper.sync.domain.SyncCounts;
 import sk.drabikp.bzscraper.sync.domain.SyncStatus;
 import sk.drabikp.bzscraper.sync.domain.SyncTask;
 
@@ -61,5 +63,28 @@ class SyncLogServiceTest {
         assertThat(service.log(task.id())).hasSize(3);
         assertThat(service.unfinished()).isEmpty();
         assertThat(service.recent(10)).extracting(SyncTask::id).containsExactly(task.id());
+    }
+
+    @Test
+    void the_lists_show_the_latest_the_open_or_the_failed_tasks_newest_first_and_count_the_open_ones() {
+        SyncTask queued = task();
+        SyncTask retrying = task();
+        outbox.markRunning(retrying.id(), clock.instant());
+        outbox.markRetry(retrying.id(), "timeout", clock.instant().plusSeconds(60), clock.instant());
+        SyncTask running = task();
+        outbox.markRunning(running.id(), clock.instant());
+        SyncTask failed = task();
+        outbox.markRunning(failed.id(), clock.instant());
+        outbox.markFailed(failed.id(), "refused", clock.instant());
+        SyncTask done = task();
+        outbox.markRunning(done.id(), clock.instant());
+        outbox.markDone(done.id(), null, clock.instant());
+
+        assertThat(service.tasks(Show.ALL)).extracting(SyncTask::id)
+                .containsExactly(done.id(), failed.id(), running.id(), retrying.id(), queued.id());
+        assertThat(service.tasks(Show.OPEN)).extracting(SyncTask::id)
+                .containsExactly(failed.id(), running.id(), retrying.id(), queued.id());
+        assertThat(service.tasks(Show.FAILED)).extracting(SyncTask::id).containsExactly(failed.id());
+        assertThat(service.counts()).isEqualTo(new SyncCounts(1, 1, 1, 1));
     }
 }

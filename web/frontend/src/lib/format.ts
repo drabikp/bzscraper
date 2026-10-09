@@ -6,9 +6,41 @@ export function locale(): string {
   return i18n.language?.startsWith('sk') ? 'sk-SK' : 'en-GB';
 }
 
-/** "HH:mm" from "HH:mm" or "HH:mm:ss"; empty for none. */
+/** How times are shown and picked: 24-hour unless the user chose 12-hour (remembered on this device). */
+export type TimeFormat = '24h' | '12h';
+
+let currentTimeFormat: TimeFormat = (() => {
+  try {
+    return localStorage.getItem('timeFormat') === '12h' ? '12h' : '24h';
+  } catch {
+    return '24h';
+  }
+})();
+
+export function timeFormat(): TimeFormat {
+  return currentTimeFormat;
+}
+
+export function setTimeFormat(format: TimeFormat) {
+  currentTimeFormat = format;
+  try {
+    localStorage.setItem('timeFormat', format);
+  } catch {
+    // not remembered; fine
+  }
+}
+
+/** "HH:mm" from "HH:mm" or "HH:mm:ss" (the value, not for showing); empty for none. */
 export function hhmm(time: string | null | undefined): string {
   return time ? time.substring(0, 5) : '';
+}
+
+/** A time of day for showing: "20:30", or "8:30 PM" in the 12-hour format. */
+export function timeOfDay(time: string | null | undefined): string {
+  if (!time) return '';
+  if (currentTimeFormat === '24h') return hhmm(time);
+  const [h, m] = time.split(':').map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
 }
 
 /** A local day (and time) as a Date: "2026-10-17" + "20:30", or "2026-10-17T20:30[:00]". */
@@ -42,14 +74,14 @@ export function shortDate(date: string): string {
 /** A moment (ISO instant) as "9 Oct, 14:05". */
 export function when(instant: string | null | undefined): string {
   if (!instant) return '';
-  return new Intl.DateTimeFormat(locale(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+  return new Intl.DateTimeFormat(locale(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: currentTimeFormat === '12h' })
     .format(new Date(instant));
 }
 
 /** A moment's time of day, "14:05". */
 export function clock(instant: string | null | undefined): string {
   if (!instant) return '';
-  return new Intl.DateTimeFormat(locale(), { hour: '2-digit', minute: '2-digit' }).format(new Date(instant));
+  return new Intl.DateTimeFormat(locale(), { hour: '2-digit', minute: '2-digit', hour12: currentTimeFormat === '12h' }).format(new Date(instant));
 }
 
 /** "5 minutes ago" / "in 3 minutes". */
